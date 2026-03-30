@@ -162,8 +162,26 @@ app.get('/api/reports', async (req, res) => {
 
 app.post('/api/reports', upload.single('photo'), async (req, res) => {
   try {
-    const { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
+    let { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
     
+    // --- FOLIO GENERATION (CCFFFF) ---
+    if (!folio || folio === 'undefined') {
+      const contractNum = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+      const prefix = contractNum;
+      
+      const { rows } = await pool.query(
+        "SELECT MAX(folio) as last_folio FROM reports WHERE folio LIKE $1",
+        [`${prefix}%`]
+      );
+      
+      let nextNum = 1;
+      if (rows[0]?.last_folio) {
+        const lastNum = parseInt(rows[0].last_folio.slice(prefix.length)) || 0;
+        nextNum = lastNum + 1;
+      }
+      folio = `${prefix}${nextNum.toString().padStart(4, '0')}`;
+    }
+
     // 1. Initial Insert into Postgres
     const result = await pool.query(
       `INSERT INTO reports (folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache, status)
@@ -183,8 +201,8 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
           .toBuffer();
 
         const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-        const contractNum = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-        const contractFolderName = `${contractNum} ${empresaName}`;
+        const contractNumForFolder = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+        const contractFolderName = `${contractNumForFolder} ${empresaName}`;
         
         const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
         const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
