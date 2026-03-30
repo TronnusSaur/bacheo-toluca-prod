@@ -214,6 +214,7 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
         
         // Update DB with photo URL
         await pool.query('UPDATE reports SET photoUrl = $1 WHERE id = $2', [driveLink, newReport.id]);
+        newReport.photourl = driveLink;
         newReport.photoUrl = driveLink;
       } catch (err) {
         console.error('[DRIVE ERROR]', err.message);
@@ -249,8 +250,12 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
     if (req.file) {
       const compressedBuffer = await sharp(req.file.path).resize(1200).jpeg({ quality: 60 }).toBuffer();
       const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-      const contractNum = (report.contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-      const contractFolderName = `${contractNum} ${report.empresaName}`;
+      
+      const cid = report.contractid || report.contractId || '0';
+      const ename = report.empresaname || report.empresaName || 'Empresa';
+      
+      const contractNum = (cid.match(/\d+/)?.[0] || '0').padStart(3, '0');
+      const contractFolderName = `${contractNum} ${ename}`;
       
       const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
       const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
@@ -264,12 +269,16 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
       await pool.query(`UPDATE reports SET ${colName} = $1 WHERE folio = $2`, [driveLink, folio]);
       
       // Update Sheets
-      await updateReportInSheet(process.env.SHEET_ID, folio, { [colName]: driveLink });
+      const sheetUpdates = phase === 'caja' ? { photocaja: driveLink } : { photofinal: driveLink };
+      await updateReportInSheet(process.env.SHEET_ID, folio, sheetUpdates);
 
       res.json({ success: true, link: driveLink });
+    } else {
+      res.status(400).json({ error: 'No se recibió ninguna foto' });
     }
   } catch (err) {
-    res.status(500).json({ error: 'Error al subir foto secundaria' });
+    console.error('[PHOTO UPDATE ERROR]', err);
+    res.status(500).json({ error: 'Error al subir foto secundaria: ' + err.message });
   }
 });
 
@@ -279,9 +288,15 @@ app.patch('/api/reports/:folio/status', async (req, res) => {
   const { status } = req.body;
   try {
     await pool.query('UPDATE reports SET status = $1 WHERE folio = $2', [status, folio]);
-    await updateReportInSheet(process.env.SHEET_ID, folio, { status });
-    res.json({ success: true });
+    if (process.env.SHEET_ID) {
+      await updateReportInSheet(process.env.SHEET_ID, folio, { status });
+    }
+    
+    // Return the updated report
+    const { rows } = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
+    res.json(rows[0]);
   } catch (err) {
+    console.error('[STATUS PATCH ERROR]', err);
     res.status(500).json({ error: 'Fallo al actualizar estatus' });
   }
 });

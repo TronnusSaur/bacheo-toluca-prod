@@ -5,8 +5,10 @@ import './LogScreen.css'
 interface Report {
   id: number;
   folio: string;
-  contractId: string;
-  locationDesc: string;
+  contractid?: string;
+  contractId?: string;
+  locationdesc?: string;
+  locationDesc?: string;
   delegacion: string;
   colonia: string;
   status: string;
@@ -64,6 +66,9 @@ export default function LogScreen() {
         setSyncStatus(`¡CAPTURA EXITOSA!`)
         setCurrentStep('CONTINUE')
         fetchReports()
+      } else {
+        const error = await res.json()
+        setSyncStatus(`ERROR: ${error.error || 'Fallo servidor'}`)
       }
     } catch (err) {
       setSyncStatus('FALLO DE RED (CORS)')
@@ -118,7 +123,7 @@ export default function LogScreen() {
           <div className="card-top">
              <div>
                 <span className="folio-tag">{selectedReport.folio}</span>
-                <p className="subtitle-main" style={{ color: '#94a3b8', fontSize: '0.6rem' }}>{selectedReport.contractId}</p>
+                <p className="subtitle-main" style={{ color: '#94a3b8', fontSize: '0.6rem' }}>{selectedReport.contractid || selectedReport.contractId}</p>
              </div>
              <span className={`status-tag ${isDetected ? 'status-detected' : 'status-process'}`}>
                 {selectedReport.status}
@@ -127,7 +132,7 @@ export default function LogScreen() {
 
           <div className="card-body">
              <div className="location-snippet" style={{ color: '#1e293b', fontSize: '0.85rem' }}>
-                <p>{selectedReport.locationDesc}</p>
+                <p>{selectedReport.locationdesc || selectedReport.locationDesc}</p>
              </div>
              <div className="zone-chips">
                 <span className="chip">{selectedReport.delegacion}</span>
@@ -201,7 +206,7 @@ export default function LogScreen() {
                <div className="card-body">
                   <div className="location-snippet">
                     <MapPin size={12} className="text-cyan-500" />
-                    <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{report.locationDesc}</p>
+                    <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{report.locationdesc || report.locationDesc}</p>
                   </div>
                   <div className="zone-chips">
                      <span className="chip">{report.delegacion}</span>
