@@ -124,34 +124,30 @@ export default function MapScreen() {
             <Marker key={`${report.id}-${report.status}`} position={[report.lat, report.lng] as any} // @ts-ignore
                 icon={createPotholeIcon(report.status)}>
               <Popup>
-                <div className="p-4" style={{ minWidth: '180px' }}>
-                  <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                    <h4 className="text-sm font-black text-slate-900 m-0">{report.folio}</h4>
+                <div style={{ padding: '12px 16px', minWidth: '200px', backgroundColor: 'white' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 950, color: '#0f172a' }}>{report.folio}</span>
                     <span className={`status-tag-mini status-${report.status === 'DETECTADO' ? 'detected' : report.status === 'EN PROCESO' ? 'process' : 'finished'}`}>
                       {report.status}
                     </span>
                   </div>
-                  <div className="popup-details">
-                    <div className="mb-2">
-                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Delegación</p>
-                      <p className="text-xs font-bold text-slate-700 m-0">{report.delegacion}</p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#94a3b8', textTransform: 'uppercase', margin: 0, letterSpacing: '0.05em' }}>ZONA</p>
+                      <p style={{ fontSize: '11px', fontWeight: 700, color: '#334155', margin: 0 }}>{report.delegacion} • {report.colonia}</p>
                     </div>
                     
-                    <div className="mb-2">
-                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Colonia / UT</p>
-                      <p className="text-xs font-bold text-slate-700 m-0">{report.colonia}</p>
-                    </div>
-                    
-                    <div className="mb-2">
-                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Fecha de Registro</p>
-                      <p className="text-xs font-bold text-slate-700 m-0">
-                        {new Date(report.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+                    <div>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#94a3b8', textTransform: 'uppercase', margin: 0, letterSpacing: '0.05em' }}>REGISTRO</p>
+                      <p style={{ fontSize: '11px', fontWeight: 700, color: '#334155', margin: 0 }}>
+                        {new Date(report.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </p>
                     </div>
 
-                    <div className="mt-3 pt-2 border-t border-slate-50">
-                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none italic">Ubicación Ref.</p>
-                      <p className="text-[10px] font-bold text-slate-500 m-0 leading-tight">
+                    <div style={{ background: '#f8fafc', padding: '8px', borderRadius: '10px', marginTop: '4px', border: '1px solid #f1f5f9' }}>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', margin: '0 0 2px 0' }}>REFERENCIA</p>
+                      <p style={{ fontSize: '10px', fontWeight: 500, color: '#475569', margin: 0, lineHeight: '1.2' }}>
                         {report.locationdesc || report.locationDesc}
                       </p>
                     </div>
