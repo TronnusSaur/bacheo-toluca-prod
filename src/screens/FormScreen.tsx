@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Calculator, Camera, MapPin, UserCheck, Phone } from 'lucide-react'
+import { Calculator, Camera, MapPin, UserCheck, Phone, CheckCircle } from 'lucide-react'
 import './FormScreen.css'
 
 interface Contract {
@@ -31,6 +31,7 @@ export default function FormScreen() {
   })
   const [isLoadingRadar, setIsLoadingRadar] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<string | null>(null)
+  const [hasPhoto, setHasPhoto] = useState(false)
 
   useEffect(() => {
     console.log('[PRUEBA] Buscando contratos...');
@@ -155,6 +156,20 @@ export default function FormScreen() {
       const data = await response.json();
       if (response.ok) {
         setSubmitStatus(`✅ ÉXITO: FOLIO ${data.folio}. Sincronizado.`);
+        setHasPhoto(false);
+        setFormData({
+          contractId: '',
+          locationDesc: '',
+          largo: '',
+          ancho: '',
+          profundidad: '',
+          m2: 0,
+          delegacion: '---',
+          colonia: '---',
+          lat: 0,
+          lng: 0,
+          tipoBache: 'SUPERFICIAL'
+        });
       } else {
         setSubmitStatus('❌ ERROR AL GUARDAR');
       }
@@ -199,7 +214,7 @@ export default function FormScreen() {
               <span className="test-badge">⚠️ DATOS REALES (CATÁLOGOR)</span>
             </div>
           </div>
-          <button onClick={requestLocation} disabled={isLoadingRadar} className="btn-radar">
+          <button onClick={requestLocation} disabled={isLoadingRadar} type="button" className="btn-radar">
             <MapPin size={16} />
             {isLoadingRadar ? 'SINC...' : 'OBTENER UBICACIÓN'}
           </button>
@@ -277,9 +292,9 @@ export default function FormScreen() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
              <span className="calc-title" style={{ margin: 0 }}>Dimensiones de Obra</span>
              {formData.profundidad && (
-                 <span className={`badge-depth ${parseFloat(formData.profundidad) > 0.07 ? 'deep' : 'shallow'}`}>
-                   {parseFloat(formData.profundidad) > 0.07 ? 'PROFUNDO (>0.07m)' : 'SUPERFICIAL (≤0.07m)'}
-                 </span>
+                  <span className={`badge-depth ${parseFloat(formData.profundidad) > 0.07 ? 'deep' : 'shallow'}`}>
+                    {parseFloat(formData.profundidad) > 0.07 ? 'PROFUNDO (>0.07m)' : 'SUPERFICIAL (≤0.07m)'}
+                  </span>
              )}
           </div>
           
@@ -332,7 +347,7 @@ export default function FormScreen() {
         </div>
 
         <div className="form-footer">
-          <label className="btn-photo">
+          <label className={`btn-photo ${hasPhoto ? 'btn-photo-success' : ''}`}>
             <input 
               type="file" 
               accept="image/*" 
@@ -341,11 +356,12 @@ export default function FormScreen() {
               onChange={(e) => {
                 if (e.target.files?.[0]) {
                   setSubmitStatus(`[PRUEBA] Foto capturada: ${e.target.files[0].name}`);
+                  setHasPhoto(true);
                 }
               }}
             />
-            <Camera size={24} />
-            <span>TOMAR FOTO</span>
+            {hasPhoto ? <CheckCircle size={24} className="text-emerald-500" /> : <Camera size={24} />}
+            <span>{hasPhoto ? 'FOTO LISTA' : 'TOMAR FOTO'}</span>
           </label>
           <button type="submit" className="btn-submit">
             GUARDAR APERTURA
