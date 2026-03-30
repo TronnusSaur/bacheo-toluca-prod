@@ -25,9 +25,9 @@ function mapReportToRow(report) {
   return [
     report.folio || '',
     fecha,
-    report.contractId || '',
-    report.empresaName || '',
-    report.locationDesc || '',
+    report.contractid || report.contractId || '',
+    report.empresaname || report.empresaName || '',
+    report.locationdesc || report.locationDesc || '',
     report.delegacion || '',
     report.colonia || '',
     `${report.lat || 0}, ${report.lng || 0}`,
@@ -35,9 +35,9 @@ function mapReportToRow(report) {
     report.ancho || '0',
     report.profundidad || '0',
     report.m2 || '0',
-    report.tipoBache || '',
+    report.tipobache || report.tipoBache || '',
     report.status || 'DETECTADO',
-    report.photoUrl || ''
+    report.photourl || report.photoUrl || ''
   ];
 }
 
@@ -94,28 +94,32 @@ export async function updateReportInSheet(sheetId, folio, updates) {
     const sheetRow = rowIndex + 1;
 
     // Photos and Status columns: P (photoCaja), Q (photoFinal), N (status)
-    if (updates.photoCaja) {
+    const photoCaja = updates.photocaja || updates.photoCaja;
+    const photoFinal = updates.photofinal || updates.photoFinal;
+    const status = updates.status;
+
+    if (photoCaja) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
         range: `Hoja 1!P${sheetRow}`,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[updates.photoCaja]] },
+        requestBody: { values: [[photoCaja]] },
       });
     }
-    if (updates.photoFinal) {
+    if (photoFinal) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
         range: `Hoja 1!Q${sheetRow}`,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[updates.photoFinal]] },
+        requestBody: { values: [[photoFinal]] },
       });
     }
-    if (updates.status) {
+    if (status) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
         range: `Hoja 1!N${sheetRow}`,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[updates.status]] },
+        requestBody: { values: [[status]] },
       });
     }
     
