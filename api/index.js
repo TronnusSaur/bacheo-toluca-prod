@@ -4,6 +4,7 @@ import multer from 'multer';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
+import * as turf from '@turf/turf';
 
 // Production Libraries
 import pool, { initDb, saveTokens } from './lib/db.js';
@@ -17,8 +18,34 @@ const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
 app.use(cors());
 app.use(express.json());
 
-// Initialize DB Tbales
-initDb();
+// --- INICIALIZACIÓN DB (Middleware para asegurar que las tablas existan) ---
+app.use(async (req, res, next) => {
+  try {
+    await initDb();
+    next();
+  } catch (err) {
+    console.error('[CRITICAL DB ERROR]', err);
+    res.status(500).json({ error: 'Fallo al inicializar base de datos' });
+  }
+});
+
+// --- CACHE PARA DATOS GEOGRÁFICOS ---
+let utbDataCache = null;
+let delegationsDataCache = null;
+const GEOJSON_FILE = path.join(process.cwd(), 'UTB REAL.geojson');
+
+function loadGeoJSON() {
+  if (!utbDataCache) {
+    if (fs.existsSync(GEOJSON_FILE)) {
+      const content = fs.readFileSync(GEOJSON_FILE, 'utf8');
+      utbDataCache = JSON.parse(content);
+      console.log('[API] UTB REAL.geojson cargado en memoria.');
+    } else {
+      console.error('[API ERROR] UTB REAL.geojson no encontrado en:', GEOJSON_FILE);
+    }
+  }
+  return utbDataCache;
+}
 
 // --- AUTH ROUTES ---
 app.get('/api/auth/login', (req, res) => {
@@ -39,9 +66,88 @@ app.get('/api/auth/callback', async (req, res) => {
 });
 
 // --- CATALOG DATA (DYNAMIC) ---
-app.get('/api/catalog', async (req, res) => {
-  // Can be moved to DB later, keeping hardcoded for now or loading from CSV
-  res.json({ success: true, message: 'Catálogo disponible localmente en el frontend' });
+app.get('/api/catalogs/contracts', (req, res) => {
+  const CONTRACTS_FILE = path.join(process.cwd(), 'CATALOGOS', 'RESUMEN DE CONTRATOS - SUPERVISORES 2026 - Registros Contratos Reales.csv');
+  
+  if (!fs.existsSync(CONTRACTS_FILE)) {
+    return res.status(404).json({ error: 'Catálogo de contratos no encontrado en ' + CONTRACTS_FILE });
+  }
+
+  try {
+    const content = fs.readFileSync(CONTRACTS_FILE, 'utf8');
+    const lines = content.split('\n').filter(l => l.trim() !== '');
+    
+    const contracts = lines.slice(1).map((line, idx) => {
+      const row = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(item => item.trim().replace(/^"|"$/g, ''));
+      if (row.length < 10) return null;
+      return {
+        id_real: row[0],
+        id: row[1],
+        delegacion: row[2],
+        empresa: row[3],
+        supervisor: row[9],
+        supervisor_tel: row[10],
+        residente: row[11],
+        residente_tel: row[12],
+      };
+    }).filter(c => c && c.id && c.id !== '#REF!');
+
+    res.json(contracts);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al procesar catálogo' });
+  }
+});
+
+// --- RADAR API ---
+app.post('/api/radar', (req, res) => {
+  const { lat, lng } = req.body;
+  const data = loadGeoJSON();
+  if (!data) return res.status(500).json({ error: 'Datos geográficos no disponibles en el servidor' });
+
+  try {
+    const point = turf.point([lng, lat]);
+    let foundZone = null;
+
+    for (const feature of data.features) {
+      if (turf.booleanPointInPolygon(point, feature)) {
+        foundZone = {
+          name: feature.properties.NOMUT || feature.properties.NOMDEL,
+          type: feature.properties.NOMUT ? 'COLONIA' : 'DELEGACION',
+          delegacion: feature.properties.NOMDEL
+        };
+        break;
+      }
+    }
+
+    if (foundZone) {
+      res.json(foundZone);
+    } else {
+      res.status(404).json({ error: 'Ubicación fuera de la zona de cobertura de Toluca' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Error en procesamiento radar: ' + err.message });
+  }
+});
+
+// --- GEOJSON ENDPOINTS (MAP) ---
+app.get('/api/geojson', (req, res) => {
+  const data = loadGeoJSON();
+  if (data) res.json(data);
+  else res.status(500).json({ error: 'GeoJSON no disponible' });
+});
+
+app.get('/api/geojson/delegations', (req, res) => {
+  if (delegationsDataCache) return res.json(delegationsDataCache);
+  
+  const data = loadGeoJSON();
+  if (!data) return res.status(500).json({ error: 'GeoJSON no disponible' });
+
+  try {
+    delegationsDataCache = turf.dissolve(data, { propertyName: 'NOMDEL' });
+    res.json(delegationsDataCache);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al disolver delegaciones' });
+  }
 });
 
 // --- REPORTS API ---

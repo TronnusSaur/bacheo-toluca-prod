@@ -11,14 +11,23 @@ const pool = new Pool({
 
 export default pool;
 
+let dbInitialized = false;
+
 /**
  * Initialize Tables (Equivalent to schema.sql)
  */
 export async function initDb() {
+  if (dbInitialized) return;
+  
   const client = await pool.connect();
   try {
+    console.log('[DB] Inicializando tablas...');
     // PostGIS (Only if needed, some free tiers don't support it)
-    await client.query('CREATE EXTENSION IF NOT EXISTS postgis;');
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS postgis;');
+    } catch (e) {
+      console.warn('[DB] skip postgis extension (not supported or not needed)');
+    }
 
     // Table for System Settings (Tokens, etc)
     await client.query(`
@@ -58,6 +67,7 @@ export async function initDb() {
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoCaja TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoFinal TEXT;");
 
+    dbInitialized = true;
     console.log('[DB] Base de datos inicializada correctamente.');
   } catch (err) {
     console.error('[DB ERROR] Fallo al inicializar tablas:', err.message);
