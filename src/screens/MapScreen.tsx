@@ -124,12 +124,38 @@ export default function MapScreen() {
             <Marker key={`${report.id}-${report.status}`} position={[report.lat, report.lng] as any} // @ts-ignore
                 icon={createPotholeIcon(report.status)}>
               <Popup>
-                <div className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`w-2 h-2 rounded-full ${report.status === 'DETECTADO' ? 'bg-red-500' : report.status === 'EN PROCESO' ? 'bg-amber-500' : 'bg-teal-500'}`} />
+                <div className="p-4" style={{ minWidth: '180px' }}>
+                  <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
                     <h4 className="text-sm font-black text-slate-900 m-0">{report.folio}</h4>
+                    <span className={`status-tag-mini status-${report.status === 'DETECTADO' ? 'detected' : report.status === 'EN PROCESO' ? 'process' : 'finished'}`}>
+                      {report.status}
+                    </span>
                   </div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{report.locationDesc}</p>
+                  <div className="popup-details">
+                    <div className="mb-2">
+                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Delegación</p>
+                      <p className="text-xs font-bold text-slate-700 m-0">{report.delegacion}</p>
+                    </div>
+                    
+                    <div className="mb-2">
+                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Colonia / UT</p>
+                      <p className="text-xs font-bold text-slate-700 m-0">{report.colonia}</p>
+                    </div>
+                    
+                    <div className="mb-2">
+                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none">Fecha de Registro</p>
+                      <p className="text-xs font-bold text-slate-700 m-0">
+                        {new Date(report.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-slate-50">
+                      <p className="text-[9px] font-black text-slate-400 uppercase mb-0.5 leading-none italic">Ubicación Ref.</p>
+                      <p className="text-[10px] font-bold text-slate-500 m-0 leading-tight">
+                        {report.locationdesc || report.locationDesc}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </Popup>
             </Marker>
@@ -157,15 +183,15 @@ export default function MapScreen() {
 
             <div className="counter-grid-mini">
                <div className="stat-box-mini bg-red-nordic">
-                  <span>{reports.filter(r => r.status === 'DETECTADO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'DETECTADO').length}</span>
                   <span>Rojos</span>
                </div>
                <div className="stat-box-mini bg-amber-nordic">
-                  <span>{reports.filter(r => r.status === 'EN PROCESO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'EN PROCESO').length}</span>
                   <span>Ámbar</span>
                </div>
                <div className="stat-box-mini bg-teal-nordic">
-                  <span>{reports.filter(r => r.status === 'TERMINADO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'TERMINADO').length}</span>
                   <span>Hechos</span>
                </div>
             </div>

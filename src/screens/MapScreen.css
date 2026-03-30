@@ -139,7 +139,7 @@
 
 .counter-grid-mini {
   display: grid;
-  grid-template-cols: repeat(3, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.6rem;
 }
 
@@ -158,3 +158,29 @@
 .bg-red-nordic { background: #fef2f2; color: #ef4444; }
 .bg-amber-nordic { background: #fffbeb; color: #f59e0b; }
 .bg-teal-nordic { background: #f0fdfa; color: #00b8a3; }
+
+/* POPUP REFINEMENT */
+.leaflet-popup-content-wrapper {
+  border-radius: 20px !important;
+  padding: 0 !important;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2) !important;
+}
+
+.leaflet-popup-content {
+  margin: 0 !important;
+  width: auto !important;
+}
+
+.status-tag-mini {
+  font-size: 8px;
+  font-weight: 950;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.05em;
+}
+
+.status-tag-mini.status-detected { background: #fee2e2; color: #ef4444; }
+.status-tag-mini.status-process { background: #fef3c7; color: #d97706; }
+.status-tag-mini.status-finished { background: #ccfbf1; color: #0d9488; }
