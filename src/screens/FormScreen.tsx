@@ -139,10 +139,12 @@ export default function FormScreen() {
     submission.append('colonia', formData.colonia);
     submission.append('tipoBache', formData.tipoBache);
 
-    // Photo Capture
+    // Photo Capture & Compression
     const photoInput = document.querySelector('input[type="file"]') as HTMLInputElement;
     if (photoInput?.files?.[0]) {
-      submission.append('photo', photoInput.files[0]);
+      setSubmitStatus('[PRUEBA] Comprimiendo foto para campo...');
+      const compressedBlob = await compressImage(photoInput.files[0]);
+      submission.append('photo', compressedBlob, 'upload.jpg');
     }
 
     try {
@@ -160,6 +162,32 @@ export default function FormScreen() {
       setSubmitStatus('❌ ERROR DE CONEXIÓN');
     }
   }
+
+  const compressImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
+        };
+      };
+    });
+  };
 
   return (
     <div className="form-container animate-in">

@@ -64,13 +64,14 @@ export default function LogScreen() {
     if (!file || !selectedReport) return
 
     const phase = selectedReport.status === 'DETECTADO' ? 'caja' : 'terminado'
-    setSyncStatus(`SUBIENDO FOTO...`)
+    setSyncStatus(`COMPRIMIENDO FOTO...`)
     
-    const formData = new FormData()
-    formData.append('photo', file)
-    formData.append('phase', phase)
-
     try {
+      const compressedBlob = await compressImage(file);
+      const formData = new FormData()
+      formData.append('photo', compressedBlob, 'upload.jpg')
+      formData.append('phase', phase)
+
       const res = await fetch(`/api/reports/${selectedReport.folio}/photo`, {
         method: 'POST',
         body: formData
@@ -121,6 +122,32 @@ export default function LogScreen() {
       setSyncStatus('FALLO DE RED (PATCH)')
     }
   }
+
+  const compressImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
+        };
+      };
+    });
+  };
 
   if (selectedReport) {
     const isDetected = selectedReport.status === 'DETECTADO'
