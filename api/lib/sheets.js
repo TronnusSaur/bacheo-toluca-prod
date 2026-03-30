@@ -3,13 +3,11 @@ import { getGoogleClient } from './googleClient.js';
 import fs from 'fs';
 import path from 'path';
 
-const SHEETS_LOG = path.join(process.cwd(), 'sheets_audit.log');
-
 function logSheets(msg, data = null) {
   const timestamp = new Date().toISOString();
-  let line = `[${timestamp}] ${msg}`;
-  if (data) line += ` | Error: ${JSON.stringify(data, null, 2)}`;
-  fs.appendFileSync(SHEETS_LOG, line + '\n');
+  let line = `[${timestamp}][SHEETS-AUDIT] ${msg}`;
+  if (data) line += ` | Data/Error: ${JSON.stringify(data, null, 2)}`;
+  console.log(line);
 }
 
 /**
