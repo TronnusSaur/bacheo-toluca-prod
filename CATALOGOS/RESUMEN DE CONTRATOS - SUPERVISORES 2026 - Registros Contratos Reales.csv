@@ -1,0 +1,3 @@
+id_real,id,delegacion,empresa,f_término,status,resumen,avance,supervisor,supervisor_tel,residente,residente_tel
+CONTRATO-001,47-01,CENTRO,EMPRESA A,2026-12-31,ACTIVO,Bacheo General,0%,Juan Perez,555-123-4567,Pedro Gomez,555-987-6543
+CONTRATO-002,47-02,NORTE,EMPRESA B,2026-12-31,ACTIVO,Bacheo Profundo,0%,Maria Lopez,555-222-3333,Jose Ruiz,555-444-5555
