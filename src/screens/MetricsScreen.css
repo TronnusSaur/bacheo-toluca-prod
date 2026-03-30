@@ -1,0 +1,71 @@
+.metrics-container {
+  padding: 1.5rem;
+}
+
+.metrics-title {
+  font-size: 1.8rem;
+  font-weight: 900;
+  color: #1e293b;
+  margin: 0;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid-cols-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.mb-8 { margin-bottom: 2rem; }
+.mb-6 { margin-bottom: 1.5rem; }
+.mt-1 { margin-top: 0.25rem; }
+.p-6 { padding: 1.5rem; }
+
+.nordic-card {
+  background-color: white;
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  border: 1px solid #f1f5f9;
+}
+
+.card-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 1rem;
+}
+
+.huge-number {
+  font-size: 2.5rem;
+  font-weight: 900;
+  color: #334155;
+}
+
+.huge-number.teal {
+  color: #0891b2;
+}
+
+.bg-slate-900 {
+  background-color: #0f172a;
+}
+
+.rounded-3xl {
+  border-radius: 1.5rem;
+}
+
+.shadow-xl {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.text-white { color: white; }
+.text-cyan-400 { color: #22d3ee; }
+.text-slate-400 { color: #94a3b8; }
+.text-xs { font-size: 0.75rem; }
+.leading-relaxed { line-height: 1.625; }
+.tracking-widest { letter-spacing: 0.1em; }
+.uppercase { text-transform: uppercase; }

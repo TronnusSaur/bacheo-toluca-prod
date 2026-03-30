@@ -1,0 +1,166 @@
+import express from 'express';
+import cors from 'cors';
+import multer from 'multer';
+import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
+
+// Production Libraries
+import pool, { initDb, saveTokens } from './lib/db.js';
+import { getAuthUrl, getTokensFromCode, setClientTokens } from './lib/auth.js';
+import { uploadFile, getOrCreateFolder } from './lib/drive.js';
+import { appendReportToSheet, updateReportInSheet } from './lib/sheets.js';
+
+const app = express();
+const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
+
+app.use(cors());
+app.use(express.json());
+
+// Initialize DB Tbales
+initDb();
+
+// --- AUTH ROUTES ---
+app.get('/api/auth/login', (req, res) => {
+  const url = getAuthUrl();
+  res.redirect(url);
+});
+
+app.get('/api/auth/callback', async (req, res) => {
+  const { code } = req.query;
+  try {
+    const tokens = await getTokensFromCode(code);
+    await saveTokens(tokens); // Persistent in Postgres
+    setClientTokens(tokens);
+    res.send('<h1>Login Exitoso en la Nube</h1><p>Ya puedes cerrar esta ventana y volver a usar la app.</p>');
+  } catch (err) {
+    res.status(500).send('Falló el login en la nube: ' + err.message);
+  }
+});
+
+// --- CATALOG DATA (DYNAMIC) ---
+app.get('/api/catalog', async (req, res) => {
+  // Can be moved to DB later, keeping hardcoded for now or loading from CSV
+  res.json({ success: true, message: 'Catálogo disponible localmente en el frontend' });
+});
+
+// --- REPORTS API ---
+app.get('/api/reports', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM reports ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al leer baches' });
+  }
+});
+
+app.post('/api/reports', upload.single('photo'), async (req, res) => {
+  try {
+    const { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
+    
+    // 1. Initial Insert into Postgres
+    const result = await pool.query(
+      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'DETECTADO') RETURNING *`,
+      [folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache]
+    );
+
+    const newReport = result.rows[0];
+    let driveLink = null;
+
+    // 2. Drive Photo Upload
+    if (req.file) {
+      try {
+        const compressedBuffer = await sharp(req.file.path)
+          .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 60 })
+          .toBuffer();
+
+        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+        const contractNum = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+        const contractFolderName = `${contractNum} ${empresaName}`;
+        
+        const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
+        const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
+        
+        const photoName = `${folio}_inicial.jpg`;
+        const driveData = await uploadFile(photoName, 'image/jpeg', compressedBuffer, folioFolderId);
+        
+        driveLink = driveData.webViewLink;
+        
+        // Update DB with photo URL
+        await pool.query('UPDATE reports SET photoUrl = $1 WHERE id = $2', [driveLink, newReport.id]);
+        newReport.photoUrl = driveLink;
+      } catch (err) {
+        console.error('[DRIVE ERROR]', err.message);
+      }
+    }
+
+    // 3. Sheets Sync
+    if (process.env.SHEET_ID) {
+      try {
+        await appendReportToSheet(process.env.SHEET_ID, newReport);
+      } catch (err) {
+        console.error('[SHEETS ERROR]', err.message);
+      }
+    }
+
+    res.status(201).json({ ...newReport, driveLink });
+  } catch (err) {
+    console.error('[REPORTS POST ERROR]', err);
+    res.status(500).json({ error: 'Fallo al procesar bache' });
+  }
+});
+
+// Photo Update (Caja/Final)
+app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) => {
+  const { folio } = req.params;
+  const { phase } = req.body; // 'caja' o 'terminado'
+
+  try {
+    const reportRes = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
+    if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
+    const report = reportRes.rows[0];
+
+    if (req.file) {
+      const compressedBuffer = await sharp(req.file.path).resize(1200).jpeg({ quality: 60 }).toBuffer();
+      const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+      const contractNum = (report.contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+      const contractFolderName = `${contractNum} ${report.empresaName}`;
+      
+      const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
+      const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
+      
+      const photoName = `${folio}_${phase}.jpg`;
+      const driveData = await uploadFile(photoName, 'image/jpeg', compressedBuffer, folioFolderId);
+      const driveLink = driveData.webViewLink;
+
+      // Update DB and Sheets
+      const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
+      await pool.query(`UPDATE reports SET ${colName} = $1 WHERE folio = $2`, [driveLink, folio]);
+      
+      // Update Sheets
+      await updateReportInSheet(process.env.SHEET_ID, folio, { [colName]: driveLink });
+
+      res.json({ success: true, link: driveLink });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Error al subir foto secundaria' });
+  }
+});
+
+// Update Status
+app.patch('/api/reports/:folio/status', async (req, res) => {
+  const { folio } = req.params;
+  const { status } = req.body;
+  try {
+    await pool.query('UPDATE reports SET status = $1 WHERE folio = $2', [status, folio]);
+    await updateReportInSheet(process.env.SHEET_ID, folio, { status });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Fallo al actualizar estatus' });
+  }
+});
+
+// Export as Vercel Function
+export default app;
