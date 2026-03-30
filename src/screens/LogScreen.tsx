@@ -157,7 +157,7 @@ export default function LogScreen() {
                 )}
                 
                 {syncStatus && (
-                  <div className={`p-4 rounded-2xl text-center text-[8px] font-black uppercase tracking-widest border transition-all ${syncStatus.includes('FALLO') || syncStatus.includes('ERROR') ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+                   <div className={`p-4 rounded-2xl text-center text-[8px] font-black uppercase tracking-widest border transition-all ${syncStatus.includes('FALLO') || syncStatus.includes('ERROR') ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
                     {syncStatus}
                   </div>
                 )}
