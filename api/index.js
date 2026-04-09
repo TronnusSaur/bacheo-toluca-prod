@@ -312,7 +312,7 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
       const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
 
       await pool.query(
-        `UPDATE reports SET ${colName} = $1, status = $2, updatedat = NOW() WHERE folio = $3`, 
+        `UPDATE reports SET ${colName} = $1, status = $2 WHERE folio = $3`, 
         [driveLink, nextStatus, folio]
       );
       

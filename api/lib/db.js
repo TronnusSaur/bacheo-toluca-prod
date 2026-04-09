@@ -66,6 +66,7 @@ export async function initDb() {
     // Add columns if missing (Simple migration)
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoCaja TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoFinal TEXT;");
+    await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;");
 
     dbInitialized = true;
     console.log('[DB] Base de datos inicializada correctamente.');
