@@ -14,15 +14,23 @@ export default function App() {
   const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
-    // Lanza la sincronización automática al iniciar la app
-    registerAutoSync(({ synced }) => {
-      if (synced > 0) {
-        // Recuenta tras sincronizar
-        countPendingReports().then(setPendingCount);
+    async function initApp() {
+      try {
+        // Lanza la sincronización automática al iniciar la app
+        registerAutoSync(({ synced }) => {
+          if (synced > 0) {
+            countPendingReports().then(setPendingCount).catch(() => {});
+          }
+        });
+        // Muestra conteo inicial de pendientes
+        const count = await countPendingReports();
+        setPendingCount(count);
+      } catch (e) {
+        console.error('Error durante la inicialización del app:', e);
       }
-    });
-    // Muestra conteo inicial de pendientes
-    countPendingReports().then(setPendingCount);
+    }
+    
+    initApp();
   }, []);
 
   return (

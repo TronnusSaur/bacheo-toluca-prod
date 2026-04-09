@@ -11,12 +11,19 @@ const DB_VERSION = 1;
 /** Abre (o crea) la base de datos IndexedDB */
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    try {
+      if (typeof indexedDB === 'undefined') {
+        throw new Error('IndexedDB no está disponible en este navegador.');
+      }
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(new Error('Error al abrir base de datos local.'));
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 

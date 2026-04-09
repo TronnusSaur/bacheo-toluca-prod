@@ -14,13 +14,19 @@ export default function MetricsScreen() {
     try {
       const response = await fetch('/api/reports')
       const data = await response.json()
-      const totalM2 = data.reduce((acc: number, r: any) => acc + (r.m2 || 0), 0)
-      setStats({
-        total: data.length,
-        m2: parseFloat(totalM2.toFixed(1)),
-        completed: 0,
-        pending: data.length
-      })
+      
+      // SAFETY CHECK: Ensure data is an array
+      if (Array.isArray(data)) {
+        const totalM2 = data.reduce((acc: number, r: any) => acc + (parseFloat(r.m2) || 0), 0)
+        setStats({
+          total: data.length,
+          m2: parseFloat(totalM2.toFixed(1)),
+          completed: 0,
+          pending: data.length
+        })
+      } else {
+        console.warn('[METRICAS] El servidor no devolvió una lista de baches.');
+      }
     } catch (err) {
       console.error('[SIMULACIÓN ERROR] No se pudieron cargar métricas.')
     }
