@@ -1,16 +1,12 @@
 import { google } from 'googleapis';
-import path from 'path';
 import { Readable } from 'stream';
-import fs from 'fs';
 import { getGoogleClient } from './googleClient.js';
-
-const AUDIT_LOG = path.join(process.cwd(), 'drive_audit.log');
 
 function logAudit(msg, data = null) {
   const timestamp = new Date().toISOString();
-  let line = `[${timestamp}] ${msg}`;
-  if (data) line += ` | Error: ${JSON.stringify(data, null, 2)}`;
-  fs.appendFileSync(AUDIT_LOG, line + '\n');
+  let line = `[${timestamp}][DRIVE-AUDIT] ${msg}`;
+  if (data) line += ` | Error: ${JSON.stringify(data)}`;
+  console.log(line); // Use console.log - Vercel filesystem is read-only
 }
 
 export async function getOrCreateFolder(folderName, parentId) {
