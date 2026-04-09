@@ -5,8 +5,10 @@ import './LogScreen.css'
 interface Report {
   id: number;
   folio: string;
-  contractId: string;
-  locationDesc: string;
+  contractid?: string;
+  contractId?: string;
+  locationdesc?: string;
+  locationDesc?: string;
   delegacion: string;
   colonia: string;
   status: string;
@@ -16,6 +18,8 @@ interface Report {
 export default function LogScreen() {
   const [reports, setReports] = useState<Report[]>([])
   const [loading, setLoading] = useState(true)
+  const [contracts, setContracts] = useState<any[]>([])
+  const [selectedContractFilter, setSelectedContractFilter] = useState<string>('ALL')
   const [selectedReport, setSelectedReport] = useState<Report | null>(null)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [successModal, setSuccessModal] = useState(false)
@@ -36,8 +40,19 @@ export default function LogScreen() {
     }
   }
 
+  const fetchContracts = async () => {
+    try {
+      const response = await fetch('/api/catalogs/contracts')
+      const data = await response.json()
+      setContracts(data)
+    } catch (err) {
+      console.error('[API ERROR] No se pudo cargar el catálogo de contratos.')
+    }
+  }
+
   useEffect(() => {
     fetchReports()
+    fetchContracts()
   }, [])
 
   const handlePhotoClick = () => {
@@ -49,13 +64,14 @@ export default function LogScreen() {
     if (!file || !selectedReport) return
 
     const phase = selectedReport.status === 'DETECTADO' ? 'caja' : 'terminado'
-    setSyncStatus(`SUBIENDO FOTO...`)
+    setSyncStatus(`COMPRIMIENDO FOTO...`)
     
-    const formData = new FormData()
-    formData.append('photo', file)
-    formData.append('phase', phase)
-
     try {
+      const compressedBlob = await compressImage(file);
+      const formData = new FormData()
+      formData.append('photo', compressedBlob, 'upload.jpg')
+      formData.append('phase', phase)
+
       const res = await fetch(`/api/reports/${selectedReport.folio}/photo`, {
         method: 'POST',
         body: formData
@@ -64,6 +80,9 @@ export default function LogScreen() {
         setSyncStatus(`¡CAPTURA EXITOSA!`)
         setCurrentStep('CONTINUE')
         fetchReports()
+      } else {
+        const error = await res.json()
+        setSyncStatus(`ERROR: ${error.error || 'Fallo servidor'}`)
       }
     } catch (err) {
       setSyncStatus('FALLO DE RED (CORS)')
@@ -104,6 +123,32 @@ export default function LogScreen() {
     }
   }
 
+  const compressImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
+        };
+      };
+    });
+  };
+
   if (selectedReport) {
     const isDetected = selectedReport.status === 'DETECTADO'
     const isInProcess = selectedReport.status === 'EN PROCESO'
@@ -118,7 +163,7 @@ export default function LogScreen() {
           <div className="card-top">
              <div>
                 <span className="folio-tag">{selectedReport.folio}</span>
-                <p className="subtitle-main" style={{ color: '#94a3b8', fontSize: '0.6rem' }}>{selectedReport.contractId}</p>
+                <p className="subtitle-main" style={{ color: '#94a3b8', fontSize: '0.6rem' }}>{selectedReport.contractid || selectedReport.contractId}</p>
              </div>
              <span className={`status-tag ${isDetected ? 'status-detected' : 'status-process'}`}>
                 {selectedReport.status}
@@ -127,7 +172,7 @@ export default function LogScreen() {
 
           <div className="card-body">
              <div className="location-snippet" style={{ color: '#1e293b', fontSize: '0.85rem' }}>
-                <p>{selectedReport.locationDesc}</p>
+                <p>{selectedReport.locationdesc || selectedReport.locationDesc}</p>
              </div>
              <div className="zone-chips">
                 <span className="chip">{selectedReport.delegacion}</span>
@@ -182,15 +227,31 @@ export default function LogScreen() {
         </button>
       </div>
 
+      <div className="filter-group mb-6" style={{ background: '#f1f5f9', padding: '12px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
+        <p className="text-[10px] font-black uppercase text-slate-400 mb-2 px-2">Filtrar por Contrato</p>
+        <select 
+          className="w-full bg-white border-none rounded-xl p-3 text-xs font-bold text-slate-700 outline-none shadow-sm"
+          value={selectedContractFilter}
+          onChange={(e) => setSelectedContractFilter(e.target.value)}
+        >
+          <option value="ALL">TODOS LOS CONTRATOS</option>
+          {contracts.map((c: any) => (
+            <option key={c.id} value={c.id}>{c.id} - {c.delegacion}</option>
+          ))}
+        </select>
+      </div>
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: '4rem', color: '#e2e8f0', fontSize: '3rem', fontWeight: 950 }}>...</div>
-      ) : reports.length === 0 ? (
+      ) : reports.filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter).length === 0 ? (
         <div style={{ padding: '3rem', background: '#f8fafc', borderRadius: '32px', textAlign: 'center', border: '2px dashed #f1f5f9' }}>
-          <p className="subtitle-main" style={{ color: '#cbd5e1' }}>Sin reportes activos</p>
+          <p className="subtitle-main" style={{ color: '#cbd5e1' }}>Sin reportes en este contrato</p>
         </div>
       ) : (
         <div className="log-list">
-          {reports.map((report) => (
+          {reports
+            .filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter)
+            .map((report) => (
             <div key={report.id} className="report-card" onClick={() => setSelectedReport(report)}>
                <div className="card-top">
                   <span className="folio-tag">{report.folio}</span>
@@ -201,7 +262,7 @@ export default function LogScreen() {
                <div className="card-body">
                   <div className="location-snippet">
                     <MapPin size={12} className="text-cyan-500" />
-                    <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{report.locationDesc}</p>
+                    <p style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{report.locationdesc || report.locationDesc}</p>
                   </div>
                   <div className="zone-chips">
                      <span className="chip">{report.delegacion}</span>

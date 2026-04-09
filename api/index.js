@@ -4,6 +4,7 @@ import multer from 'multer';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
+import * as turf from '@turf/turf';
 
 // Production Libraries
 import pool, { initDb, saveTokens } from './lib/db.js';
@@ -17,8 +18,34 @@ const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
 app.use(cors());
 app.use(express.json());
 
-// Initialize DB Tbales
-initDb();
+// --- INICIALIZACIÓN DB (Middleware para asegurar que las tablas existan) ---
+app.use(async (req, res, next) => {
+  try {
+    await initDb();
+    next();
+  } catch (err) {
+    console.error('[CRITICAL DB ERROR]', err);
+    res.status(500).json({ error: 'Fallo al inicializar base de datos' });
+  }
+});
+
+// --- CACHE PARA DATOS GEOGRÁFICOS ---
+let utbDataCache = null;
+let delegationsDataCache = null;
+const GEOJSON_FILE = path.join(process.cwd(), 'UTB REAL.geojson');
+
+function loadGeoJSON() {
+  if (!utbDataCache) {
+    if (fs.existsSync(GEOJSON_FILE)) {
+      const content = fs.readFileSync(GEOJSON_FILE, 'utf8');
+      utbDataCache = JSON.parse(content);
+      console.log('[API] UTB REAL.geojson cargado en memoria.');
+    } else {
+      console.error('[API ERROR] UTB REAL.geojson no encontrado en:', GEOJSON_FILE);
+    }
+  }
+  return utbDataCache;
+}
 
 // --- AUTH ROUTES ---
 app.get('/api/auth/login', (req, res) => {
@@ -39,9 +66,88 @@ app.get('/api/auth/callback', async (req, res) => {
 });
 
 // --- CATALOG DATA (DYNAMIC) ---
-app.get('/api/catalog', async (req, res) => {
-  // Can be moved to DB later, keeping hardcoded for now or loading from CSV
-  res.json({ success: true, message: 'Catálogo disponible localmente en el frontend' });
+app.get('/api/catalogs/contracts', (req, res) => {
+  const CONTRACTS_FILE = path.join(process.cwd(), 'CATALOGOS', 'RESUMEN DE CONTRATOS - SUPERVISORES 2026 - Registros Contratos Reales.csv');
+  
+  if (!fs.existsSync(CONTRACTS_FILE)) {
+    return res.status(404).json({ error: 'Catálogo de contratos no encontrado en ' + CONTRACTS_FILE });
+  }
+
+  try {
+    const content = fs.readFileSync(CONTRACTS_FILE, 'utf8');
+    const lines = content.split('\n').filter(l => l.trim() !== '');
+    
+    const contracts = lines.slice(1).map((line, idx) => {
+      const row = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(item => item.trim().replace(/^"|"$/g, ''));
+      if (row.length < 10) return null;
+      return {
+        id_real: row[0],
+        id: row[1],
+        delegacion: row[2],
+        empresa: row[3],
+        supervisor: row[9],
+        supervisor_tel: row[10],
+        residente: row[11],
+        residente_tel: row[12],
+      };
+    }).filter(c => c && c.id && c.id !== '#REF!');
+
+    res.json(contracts);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al procesar catálogo' });
+  }
+});
+
+// --- RADAR API ---
+app.post('/api/radar', (req, res) => {
+  const { lat, lng } = req.body;
+  const data = loadGeoJSON();
+  if (!data) return res.status(500).json({ error: 'Datos geográficos no disponibles en el servidor' });
+
+  try {
+    const point = turf.point([lng, lat]);
+    let foundZone = null;
+
+    for (const feature of data.features) {
+      if (turf.booleanPointInPolygon(point, feature)) {
+        foundZone = {
+          name: feature.properties.NOMUT || feature.properties.NOMDEL,
+          type: feature.properties.NOMUT ? 'COLONIA' : 'DELEGACION',
+          delegacion: feature.properties.NOMDEL
+        };
+        break;
+      }
+    }
+
+    if (foundZone) {
+      res.json(foundZone);
+    } else {
+      res.status(404).json({ error: 'Ubicación fuera de la zona de cobertura de Toluca' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Error en procesamiento radar: ' + err.message });
+  }
+});
+
+// --- GEOJSON ENDPOINTS (MAP) ---
+app.get('/api/geojson', (req, res) => {
+  const data = loadGeoJSON();
+  if (data) res.json(data);
+  else res.status(500).json({ error: 'GeoJSON no disponible' });
+});
+
+app.get('/api/geojson/delegations', (req, res) => {
+  if (delegationsDataCache) return res.json(delegationsDataCache);
+  
+  const data = loadGeoJSON();
+  if (!data) return res.status(500).json({ error: 'GeoJSON no disponible' });
+
+  try {
+    delegationsDataCache = turf.dissolve(data, { propertyName: 'NOMDEL' });
+    res.json(delegationsDataCache);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al disolver delegaciones' });
+  }
 });
 
 // --- REPORTS API ---
@@ -56,8 +162,26 @@ app.get('/api/reports', async (req, res) => {
 
 app.post('/api/reports', upload.single('photo'), async (req, res) => {
   try {
-    const { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
+    let { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
     
+    // --- FOLIO GENERATION (CCFFFF) ---
+    if (!folio || folio === 'undefined') {
+      const contractNum = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+      const prefix = contractNum;
+      
+      const { rows } = await pool.query(
+        "SELECT MAX(folio) as last_folio FROM reports WHERE folio LIKE $1",
+        [`${prefix}%`]
+      );
+      
+      let nextNum = 1;
+      if (rows[0]?.last_folio) {
+        const lastNum = parseInt(rows[0].last_folio.slice(prefix.length)) || 0;
+        nextNum = lastNum + 1;
+      }
+      folio = `${prefix}${nextNum.toString().padStart(4, '0')}`;
+    }
+
     // 1. Initial Insert into Postgres
     const result = await pool.query(
       `INSERT INTO reports (folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache, status)
@@ -77,8 +201,8 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
           .toBuffer();
 
         const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-        const contractNum = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-        const contractFolderName = `${contractNum} ${empresaName}`;
+        const contractNumForFolder = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+        const contractFolderName = `${contractNumForFolder} ${empresaName}`;
         
         const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
         const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
@@ -90,6 +214,7 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
         
         // Update DB with photo URL
         await pool.query('UPDATE reports SET photoUrl = $1 WHERE id = $2', [driveLink, newReport.id]);
+        newReport.photourl = driveLink;
         newReport.photoUrl = driveLink;
       } catch (err) {
         console.error('[DRIVE ERROR]', err.message);
@@ -125,8 +250,12 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
     if (req.file) {
       const compressedBuffer = await sharp(req.file.path).resize(1200).jpeg({ quality: 60 }).toBuffer();
       const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-      const contractNum = (report.contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-      const contractFolderName = `${contractNum} ${report.empresaName}`;
+      
+      const cid = report.contractid || report.contractId || '0';
+      const ename = report.empresaname || report.empresaName || 'Empresa';
+      
+      const contractNum = (cid.match(/\d+/)?.[0] || '0').padStart(3, '0');
+      const contractFolderName = `${contractNum} ${ename}`;
       
       const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
       const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
@@ -140,12 +269,16 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
       await pool.query(`UPDATE reports SET ${colName} = $1 WHERE folio = $2`, [driveLink, folio]);
       
       // Update Sheets
-      await updateReportInSheet(process.env.SHEET_ID, folio, { [colName]: driveLink });
+      const sheetUpdates = phase === 'caja' ? { photocaja: driveLink } : { photofinal: driveLink };
+      await updateReportInSheet(process.env.SHEET_ID, folio, sheetUpdates);
 
       res.json({ success: true, link: driveLink });
+    } else {
+      res.status(400).json({ error: 'No se recibió ninguna foto' });
     }
   } catch (err) {
-    res.status(500).json({ error: 'Error al subir foto secundaria' });
+    console.error('[PHOTO UPDATE ERROR]', err);
+    res.status(500).json({ error: 'Error al subir foto secundaria: ' + err.message });
   }
 });
 
@@ -155,9 +288,15 @@ app.patch('/api/reports/:folio/status', async (req, res) => {
   const { status } = req.body;
   try {
     await pool.query('UPDATE reports SET status = $1 WHERE folio = $2', [status, folio]);
-    await updateReportInSheet(process.env.SHEET_ID, folio, { status });
-    res.json({ success: true });
+    if (process.env.SHEET_ID) {
+      await updateReportInSheet(process.env.SHEET_ID, folio, { status });
+    }
+    
+    // Return the updated report
+    const { rows } = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
+    res.json(rows[0]);
   } catch (err) {
+    console.error('[STATUS PATCH ERROR]', err);
     res.status(500).json({ error: 'Fallo al actualizar estatus' });
   }
 });

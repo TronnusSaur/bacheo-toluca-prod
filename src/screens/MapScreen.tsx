@@ -124,12 +124,34 @@ export default function MapScreen() {
             <Marker key={`${report.id}-${report.status}`} position={[report.lat, report.lng] as any} // @ts-ignore
                 icon={createPotholeIcon(report.status)}>
               <Popup>
-                <div className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className={`w-2 h-2 rounded-full ${report.status === 'DETECTADO' ? 'bg-red-500' : report.status === 'EN PROCESO' ? 'bg-amber-500' : 'bg-teal-500'}`} />
-                    <h4 className="text-sm font-black text-slate-900 m-0">{report.folio}</h4>
+                <div style={{ padding: '12px 16px', minWidth: '200px', backgroundColor: 'white' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 950, color: '#0f172a' }}>{report.folio}</span>
+                    <span className={`status-tag-mini status-${report.status === 'DETECTADO' ? 'detected' : report.status === 'EN PROCESO' ? 'process' : 'finished'}`}>
+                      {report.status}
+                    </span>
                   </div>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{report.locationDesc}</p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#94a3b8', textTransform: 'uppercase', margin: 0, letterSpacing: '0.05em' }}>ZONA</p>
+                      <p style={{ fontSize: '11px', fontWeight: 700, color: '#334155', margin: 0 }}>{report.delegacion} • {report.colonia}</p>
+                    </div>
+                    
+                    <div>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#94a3b8', textTransform: 'uppercase', margin: 0, letterSpacing: '0.05em' }}>REGISTRO</p>
+                      <p style={{ fontSize: '11px', fontWeight: 700, color: '#334155', margin: 0 }}>
+                        {new Date(report.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+
+                    <div style={{ background: '#f8fafc', padding: '8px', borderRadius: '10px', marginTop: '4px', border: '1px solid #f1f5f9' }}>
+                      <p style={{ fontSize: '8px', fontWeight: 900, color: '#64748b', textTransform: 'uppercase', margin: '0 0 2px 0' }}>REFERENCIA</p>
+                      <p style={{ fontSize: '10px', fontWeight: 500, color: '#475569', margin: 0, lineHeight: '1.2' }}>
+                        {report.locationdesc || report.locationDesc}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </Popup>
             </Marker>
@@ -157,15 +179,15 @@ export default function MapScreen() {
 
             <div className="counter-grid-mini">
                <div className="stat-box-mini bg-red-nordic">
-                  <span>{reports.filter(r => r.status === 'DETECTADO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'DETECTADO').length}</span>
                   <span>Rojos</span>
                </div>
                <div className="stat-box-mini bg-amber-nordic">
-                  <span>{reports.filter(r => r.status === 'EN PROCESO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'EN PROCESO').length}</span>
                   <span>Ámbar</span>
                </div>
                <div className="stat-box-mini bg-teal-nordic">
-                  <span>{reports.filter(r => r.status === 'TERMINADO').length}</span>
+                  <span>{reports.filter((r: any) => r.status === 'TERMINADO').length}</span>
                   <span>Hechos</span>
                </div>
             </div>
