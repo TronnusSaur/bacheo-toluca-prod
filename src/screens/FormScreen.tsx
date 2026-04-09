@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Calculator, Camera, MapPin, UserCheck, Phone } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Camera, MapPin, UserCheck, Phone, CheckCircle, WifiOff } from 'lucide-react'
+import { savePendingReport } from '../lib/offlineStore'
 import './FormScreen.css'
 
 interface Contract {
@@ -31,6 +32,16 @@ export default function FormScreen() {
   })
   const [isLoadingRadar, setIsLoadingRadar] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<string | null>(null)
+  const [hasPhoto, setHasPhoto] = useState(false)
+  const [folioSuffix, setFolioSuffix] = useState('')
+  const [savedOffline, setSavedOffline] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  /** Devuelve el prefijo de 2 dígitos derivado del contrato seleccionado */
+  const getContractPrefix = (contractId: string) => {
+    const num = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+    return num;
+  }
 
   useEffect(() => {
     console.log('[PRUEBA] Buscando contratos...');
@@ -116,15 +127,51 @@ export default function FormScreen() {
     )
   }
 
+  const resetForm = () => {
+    setHasPhoto(false);
+    setSavedOffline(false);
+    setFolioSuffix('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setFormData({
+      contractId: '',
+      locationDesc: '',
+      largo: '',
+      ancho: '',
+      profundidad: '',
+      m2: 0,
+      delegacion: '---',
+      colonia: '---',
+      lat: 0,
+      lng: 0,
+      tipoBache: 'SUPERFICIAL'
+    });
+    setSelectedContract(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedContract) return alert('Selecciona un contrato');
     if (formData.lat === 0) return alert('Esperando ubicación GPS...');
+    if (folioSuffix.length !== 4) return alert('El folio debe ser de exactamente 4 dígitos.');
 
-    setSubmitStatus('[PRUEBA] Procesando envío empresarial...');
+    const prefix = getContractPrefix(selectedContract.id);
+    const folio = `${prefix}${folioSuffix}`;
+
+    setSubmitStatus('Procesando...');
+    setSavedOffline(false);
     
-    // Prepare FormData
+    // Comprimir foto
+    let photoBlob: Blob | null = null;
+    let photoBuffer: ArrayBuffer | null = null;
+    if (fileInputRef.current?.files?.[0]) {
+      setSubmitStatus('Comprimiendo foto...');
+      photoBlob = await compressImage(fileInputRef.current.files[0]);
+      photoBuffer = await photoBlob.arrayBuffer();
+    }
+
+    // Construir FormData
     const submission = new FormData();
+    submission.append('folio', folio);
     submission.append('contractId', selectedContract.id);
     submission.append('empresaName', selectedContract.empresa);
     submission.append('phase', 'inicial');
@@ -138,28 +185,73 @@ export default function FormScreen() {
     submission.append('delegacion', formData.delegacion);
     submission.append('colonia', formData.colonia);
     submission.append('tipoBache', formData.tipoBache);
-
-    // Photo Capture
-    const photoInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    if (photoInput?.files?.[0]) {
-      submission.append('photo', photoInput.files[0]);
-    }
+    if (photoBlob) submission.append('photo', photoBlob, 'upload.jpg');
 
     try {
-      const response = await fetch('/api/reports', {
-        method: 'POST',
-        body: submission
-      });
+      const response = await fetch('/api/reports', { method: 'POST', body: submission });
       const data = await response.json();
       if (response.ok) {
-        setSubmitStatus(`✅ ÉXITO: FOLIO ${data.folio}. Sincronizado.`);
+        setSubmitStatus(`✅ FOLIO ${data.folio} — Sincronizado correctamente.`);
+        resetForm();
       } else {
-        setSubmitStatus('❌ ERROR AL GUARDAR');
+        setSubmitStatus(`❌ Error del servidor: ${data.error}`);
       }
     } catch (err) {
-      setSubmitStatus('❌ ERROR DE CONEXIÓN');
+      // Sin conexión: guardar en IndexedDB para sincronizar después
+      try {
+        await savePendingReport({
+          fields: {
+            folio,
+            contractId: selectedContract.id,
+            empresaName: selectedContract.empresa,
+            lat: formData.lat,
+            lng: formData.lng,
+            largo: formData.largo,
+            ancho: formData.ancho,
+            profundidad: formData.profundidad,
+            m2: formData.m2.toString(),
+            locationDesc: formData.locationDesc,
+            delegacion: formData.delegacion,
+            colonia: formData.colonia,
+            tipoBache: formData.tipoBache,
+          },
+          photoBuffer,
+          savedAt: new Date().toISOString(),
+        });
+        setSavedOffline(true);
+        setSubmitStatus(`📦 Sin red — Folio ${folio} guardado localmente. Se subirá automáticamente al recuperar señal.`);
+        resetForm();
+      } catch (idbErr) {
+        setSubmitStatus('❌ Error crítico: no se pudo guardar ni online ni offline.');
+      }
     }
   }
+
+  const compressImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
+        };
+      };
+    });
+  };
 
   return (
     <div className="form-container animate-in">
@@ -178,6 +270,12 @@ export default function FormScreen() {
         </div>
       </div>
 
+      {savedOffline && (
+        <div className="offline-banner">
+          <WifiOff size={14} />
+          <span>Guardado sin conexión — se sincronizará automáticamente.</span>
+        </div>
+      )}
       {submitStatus && <div className="sim-message">{submitStatus}</div>}
 
       <form onSubmit={handleSubmit}>
@@ -207,6 +305,29 @@ export default function FormScreen() {
             ))}
           </select>
         </div>
+
+        {selectedContract && (
+          <div className="input-group">
+            <label className="field-label">Folio del Bache (CCFFFF)*</label>
+            <div className="folio-input-row">
+              <span className="folio-prefix">{getContractPrefix(selectedContract.id)}</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]{4}"
+                maxLength={4}
+                className="folio-suffix-input"
+                placeholder="0001"
+                value={folioSuffix}
+                onChange={e => setFolioSuffix(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                required
+              />
+              {folioSuffix.length === 4 && (
+                <span className="folio-preview">{getContractPrefix(selectedContract.id)}{folioSuffix}</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {selectedContract && (
           <div className="readonly-box" style={{ marginBottom: '1.5rem', backgroundColor: '#ecfeff', border: '1px solid #cffafe' }}>
@@ -304,20 +425,23 @@ export default function FormScreen() {
         </div>
 
         <div className="form-footer">
-          <label className="btn-photo">
+          <label className={`btn-photo ${hasPhoto ? 'btn-photo-success' : ''}`}>
             <input 
+              ref={fileInputRef}
               type="file" 
               accept="image/*" 
               capture="environment" 
               style={{ display: 'none' }} 
               onChange={(e) => {
-                if (e.target.files?.[0]) {
-                  setSubmitStatus(`[PRUEBA] Foto capturada: ${e.target.files[0].name}`);
+                const file = e.target.files?.[0];
+                if (file) {
+                  setSubmitStatus(`[PRUEBA] Foto capturada: ${file.name}`);
+                  setHasPhoto(true);
                 }
               }}
             />
-            <Camera size={24} />
-            <span>TOMAR FOTO</span>
+            {hasPhoto ? <CheckCircle size={24} className="text-emerald-500" /> : <Camera size={24} />}
+            <span>{hasPhoto ? 'FOTO LISTA' : 'TOMAR FOTO'}</span>
           </label>
           <button type="submit" className="btn-submit">
             GUARDAR APERTURA

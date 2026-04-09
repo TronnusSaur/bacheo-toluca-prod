@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { LayoutGrid, Plus, LayoutList, Map as MapIcon } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { LayoutGrid, Plus, LayoutList, Map as MapIcon, WifiOff } from 'lucide-react'
+import { registerAutoSync } from './lib/syncService'
+import { countPendingReports } from './lib/offlineStore'
 import MetricsScreen from './screens/MetricsScreen'
 import FormScreen from './screens/FormScreen'
 import LogScreen from './screens/LogScreen'
@@ -9,15 +11,36 @@ type Tab = 'MAPA' | 'NUEVO' | 'BITACORA' | 'METRICAS'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('METRICAS')
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    // Lanza la sincronización automática al iniciar la app
+    registerAutoSync(({ synced }) => {
+      if (synced > 0) {
+        // Recuenta tras sincronizar
+        countPendingReports().then(setPendingCount);
+      }
+    });
+    // Muestra conteo inicial de pendientes
+    countPendingReports().then(setPendingCount);
+  }, []);
 
   return (
     <div className="app-container">
       <header className="app-header">
         <div className="header-top">
           <span className="brand-name">Bacheo <span className="brand-accent">Toluca</span></span>
-          <div className="status-indicator">
-            <span className="status-dot"></span>
-            En Línea
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {pendingCount > 0 && (
+              <div className="offline-badge" title={`${pendingCount} reporte(s) pendiente(s) de sincronizar`}>
+                <WifiOff size={12} />
+                <span>{pendingCount}</span>
+              </div>
+            )}
+            <div className="status-indicator">
+              <span className="status-dot"></span>
+              {pendingCount > 0 ? 'Pendientes' : 'En Línea'}
+            </div>
           </div>
         </div>
         <nav className="header-nav">

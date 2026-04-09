@@ -211,6 +211,21 @@
   color: #94a3b8;
   font-weight: 800;
   font-size: 0.6rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.btn-photo-success {
+  background: #f0fdf4;
+  border: 2px solid #22c55e;
+  border-style: solid;
+  color: #166534;
+  transform: scale(1.02);
+  box-shadow: 0 10px 20px rgba(34, 197, 94, 0.15);
+}
+
+.btn-photo-success span {
+  color: #15803d;
 }
 
 .btn-submit {
@@ -257,4 +272,71 @@
 @keyframes scale-up {
   from { transform: scale(0.5); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* ---- Folio Manual ---- */
+.folio-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.folio-prefix {
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: #0891b2;
+  background: #ecfeff;
+  border: 2px solid #cffafe;
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.folio-suffix-input {
+  font-size: 1.5rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-align: center;
+  width: 100%;
+  border: 2px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 0.6rem;
+  color: #0f172a;
+  background: white;
+  transition: border-color 0.2s;
+}
+
+.folio-suffix-input:focus {
+  border-color: #00b8a3;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 184, 163, 0.15);
+}
+
+.folio-preview {
+  font-size: 0.7rem;
+  font-weight: 900;
+  color: #15803d;
+  background: #f0fdf4;
+  border: 1.5px solid #bbf7d0;
+  border-radius: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+  animation: scale-up 0.25s ease;
+}
+
+/* ---- Banner Offline ---- */
+.offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.6rem 1rem;
+  border-radius: 0.75rem;
+  margin-bottom: 0.75rem;
 }

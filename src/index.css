@@ -162,3 +162,18 @@ body {
   flex-direction: column;
   width: 100%;
 }
+
+/* Offline badge en el header */
+.offline-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 800;
+  color: #dc2626;
+  background: #fef2f2;
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  animation: pulse 2s infinite;
+}
