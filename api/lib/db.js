@@ -68,6 +68,11 @@ export async function initDb() {
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoFinal TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;");
 
+    // DATA FIX: Resynchronize status for reports stuck due to the previous bug
+    console.log('[DB] Ejecutando sincronización de estatus...');
+    await client.query("UPDATE reports SET status = 'EN PROCESO' WHERE status = 'DETECTADO' AND photoCaja IS NOT NULL;");
+    await client.query("UPDATE reports SET status = 'TERMINADO' WHERE status = 'EN PROCESO' AND photoFinal IS NOT NULL;");
+
     dbInitialized = true;
     console.log('[DB] Base de datos inicializada correctamente.');
   } catch (err) {
