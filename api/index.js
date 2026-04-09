@@ -309,13 +309,21 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
 
       // Update DB and Sheets
       const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
-      await pool.query(`UPDATE reports SET ${colName} = $1 WHERE folio = $2`, [driveLink, folio]);
+      const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
+
+      await pool.query(
+        `UPDATE reports SET ${colName} = $1, status = $2, updatedat = NOW() WHERE folio = $3`, 
+        [driveLink, nextStatus, folio]
+      );
       
-      // Update Sheets
-      const sheetUpdates = phase === 'caja' ? { photocaja: driveLink } : { photofinal: driveLink };
+      // Update Sheets (including status)
+      const sheetUpdates = phase === 'caja' 
+        ? { photocaja: driveLink, status: nextStatus } 
+        : { photofinal: driveLink, status: nextStatus };
+
       await updateReportInSheet(process.env.SHEET_ID, folio, sheetUpdates);
 
-      res.json({ success: true, link: driveLink });
+      res.json({ success: true, link: driveLink, status: nextStatus });
     } else {
       res.status(400).json({ error: 'No se recibió ninguna foto' });
     }

@@ -83,6 +83,7 @@ export default function LogScreen() {
         fetchReports()
       } else if (res.status === 409) {
         setSyncStatus(`INFO: ESTE FOLIO YA TIENE ESTA FASE REGISTRADA.`)
+        fetchReports() // Re-sincronizar UI
         setCurrentStep('CONTINUE')
       } else {
         const error = await res.json()
