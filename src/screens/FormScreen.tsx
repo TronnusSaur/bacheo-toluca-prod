@@ -191,10 +191,19 @@ export default function FormScreen() {
       const response = await fetch('/api/reports', { method: 'POST', body: submission });
       const data = await response.json();
       if (response.ok) {
-        setSubmitStatus(`✅ FOLIO ${data.folio} — Sincronizado correctamente.`);
+        const s = data.sync || {};
+        const warnings = [];
+        if (!s.drive && s.driveError) warnings.push(`📵 Drive: ${s.driveError.slice(0, 80)}`);
+        if (!s.sheets && s.sheetsError) warnings.push(`📵 Sheets: ${s.sheetsError.slice(0, 80)}`);
+        
+        if (warnings.length > 0) {
+          setSubmitStatus(`⚠️ FOLIO ${data.folio} guardado en BD, pero hay errores de sincronización:\n${warnings.join('\n')}`);
+        } else {
+          setSubmitStatus(`✅ FOLIO ${data.folio} — Guardado y sincronizado (DB✓ Drive✓ Sheets✓).`);
+        }
         resetForm();
       } else {
-        setSubmitStatus(`❌ Error del servidor: ${data.error}`);
+        setSubmitStatus(`❌ Error: ${data.error}`);
       }
     } catch (err) {
       // Sin conexión: guardar en IndexedDB para sincronizar después

@@ -182,6 +182,12 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
       folio = `${prefix}${nextNum.toString().padStart(4, '0')}`;
     }
 
+    // Check for duplicate folio before insert
+    const existing = await pool.query('SELECT folio FROM reports WHERE folio = $1', [folio]);
+    if (existing.rowCount > 0) {
+      return res.status(409).json({ error: `El folio ${folio} ya existe en la base de datos. Usa un número diferente.` });
+    }
+
     // 1. Initial Insert into Postgres
     const result = await pool.query(
       `INSERT INTO reports (folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache, status)
@@ -191,6 +197,10 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
 
     const newReport = result.rows[0];
     let driveLink = null;
+    let driveOk = false;
+    let sheetsOk = false;
+    let driveError = null;
+    let sheetsError = null;
 
     // 2. Drive Photo Upload
     if (req.file) {
@@ -211,29 +221,45 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
         const driveData = await uploadFile(photoName, 'image/jpeg', compressedBuffer, folioFolderId);
         
         driveLink = driveData.webViewLink;
+        driveOk = true;
         
         // Update DB with photo URL
         await pool.query('UPDATE reports SET photoUrl = $1 WHERE id = $2', [driveLink, newReport.id]);
         newReport.photourl = driveLink;
         newReport.photoUrl = driveLink;
       } catch (err) {
+        driveError = err.message;
         console.error('[DRIVE ERROR]', err.message);
       }
+    } else {
+      driveOk = true; // No photo to upload, not an error
     }
 
     // 3. Sheets Sync
     if (process.env.SHEET_ID) {
       try {
         await appendReportToSheet(process.env.SHEET_ID, newReport);
+        sheetsOk = true;
       } catch (err) {
+        sheetsError = err.message;
         console.error('[SHEETS ERROR]', err.message);
       }
     }
 
-    res.status(201).json({ ...newReport, driveLink });
+    res.status(201).json({ 
+      ...newReport, 
+      driveLink,
+      sync: {
+        postgres: true,
+        drive: driveOk,
+        sheets: sheetsOk,
+        driveError,
+        sheetsError
+      }
+    });
   } catch (err) {
     console.error('[REPORTS POST ERROR]', err);
-    res.status(500).json({ error: 'Fallo al procesar bache' });
+    res.status(500).json({ error: 'Fallo al procesar bache', detail: err.message });
   }
 });
 
