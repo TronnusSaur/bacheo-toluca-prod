@@ -83,11 +83,16 @@ export async function updateReportInSheet(sheetId, folio, updates) {
     });
 
     const rows = readRes.data.values || [];
-    const rowIndex = rows.findIndex(r => r[0] == folio);
+    
+    // Normalize folio for lookup (remove leading zeros and spaces)
+    const normalize = (f) => String(f || '').trim().replace(/^0+/, '');
+    const normalizedFolio = normalize(folio);
+
+    const rowIndex = rows.findIndex(r => normalize(r[0]) === normalizedFolio);
     
     if (rowIndex === -1) {
-      console.warn(`[SHEETS ERROR] Folio ${folio} no encontrado.`);
-      logSheets(`Folio ${folio} NOT FOUND`);
+      console.warn(`[SHEETS ERROR] Folio ${folio} (Norm: ${normalizedFolio}) no encontrado.`);
+      logSheets(`Folio ${folio} (Norm: ${normalizedFolio}) NOT FOUND`);
       return;
     }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft } from 'lucide-react'
+import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
+import { savePendingReport } from '../lib/offlineStore'
 import './LogScreen.css'
 
 interface Report {
@@ -80,12 +81,38 @@ export default function LogScreen() {
         setSyncStatus(`¡CAPTURA EXITOSA!`)
         setCurrentStep('CONTINUE')
         fetchReports()
+      } else if (res.status === 409) {
+        setSyncStatus(`INFO: ESTE FOLIO YA TIENE ESTA FASE REGISTRADA.`)
+        setCurrentStep('CONTINUE')
       } else {
         const error = await res.json()
         setSyncStatus(`ERROR: ${error.error || 'Fallo servidor'}`)
       }
     } catch (err) {
-      setSyncStatus('FALLO DE RED (CORS)')
+      // OFFLINE SUPPORT
+      try {
+        const photoBuffer = await file.arrayBuffer();
+        await savePendingReport({
+          type: 'UPDATE',
+          phase: phase as any,
+          fields: {
+            folio: selectedReport.folio,
+            contractId: selectedReport.contractid || selectedReport.contractId || '',
+            empresaName: '', // Not strictly needed for update
+            lat: 0, lng: 0, largo: '', ancho: '', profundidad: '', m2: '',
+            locationDesc: selectedReport.locationdesc || selectedReport.locationDesc || '',
+            delegacion: selectedReport.delegacion,
+            colonia: selectedReport.colonia,
+            tipoBache: ''
+          },
+          photoBuffer,
+          savedAt: new Date().toISOString()
+        });
+        setSyncStatus('📵 SIN RED - FOTO GUARDADA LOCALMENTE. SE SUBIRÁ AL RECUPERAR SEÑAL.')
+        setCurrentStep('CONTINUE')
+      } catch (saveErr) {
+        setSyncStatus('FALLO CRÍTICO: NO SE PUDO GUARDAR NI ONLINE NI OFFLINE.')
+      }
     }
   }
 

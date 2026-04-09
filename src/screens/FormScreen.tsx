@@ -209,6 +209,8 @@ export default function FormScreen() {
       // Sin conexión: guardar en IndexedDB para sincronizar después
       try {
         await savePendingReport({
+          type: 'APERTURA',
+          phase: 'inicial',
           fields: {
             folio,
             contractId: selectedContract.id,

@@ -47,26 +47,44 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
     const auth = await getGoogleClient();
     const drive = google.drive({ version: 'v3', auth });
 
-    console.log(`[DRIVE] Attempting upload of ${fileName} via OAuth2/ServiceAccount...`);
+    // 1. Search for existing file to avoid duplicates
+    const query = `name = '${fileName}' and '${parentId}' in parents and trashed = false`;
+    const checkRes = await drive.files.list({
+      q: query,
+      fields: 'files(id)',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
 
+    const existingFile = checkRes.data.files && checkRes.data.files[0];
     const media = {
       mimeType: mimeType,
       body: Readable.from(body),
     };
 
-    const res = await drive.files.create({
-      requestBody: {
-        name: fileName,
-        parents: [parentId],
-        mimeType: mimeType
-      },
-      media: media,
-      supportsAllDrives: true,
-      fields: 'id, webViewLink',
-    });
-
-    console.log(`[DRIVE] Upload SUCCESS for ${fileName}`);
-    return res.data;
+    if (existingFile) {
+      console.log(`[DRIVE] Updating existing file: ${fileName} (${existingFile.id})`);
+      const res = await drive.files.update({
+        fileId: existingFile.id,
+        media: media,
+        supportsAllDrives: true,
+        fields: 'id, webViewLink',
+      });
+      return res.data;
+    } else {
+      console.log(`[DRIVE] Creating new file: ${fileName}`);
+      const res = await drive.files.create({
+        requestBody: {
+          name: fileName,
+          parents: [parentId],
+          mimeType: mimeType
+        },
+        media: media,
+        supportsAllDrives: true,
+        fields: 'id, webViewLink',
+      });
+      return res.data;
+    }
   } catch (err) {
     const errorData = err.response ? err.response.data : err.message;
     logAudit(`uploadFile FAILED for ${fileName}`, errorData);

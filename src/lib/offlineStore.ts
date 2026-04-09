@@ -22,6 +22,10 @@ function openDb(): Promise<IDBDatabase> {
 
 export interface PendingReport {
   id?: number;
+  /** 'APERTURA' para nuevos baches, 'UPDATE' para fotos de Caja/Final */
+  type: 'APERTURA' | 'UPDATE';
+  /** La fase de la foto: inicial, caja, terminado */
+  phase: 'inicial' | 'caja' | 'terminado';
   /** Los campos del formulario como objeto plano */
   fields: {
     folio: string;

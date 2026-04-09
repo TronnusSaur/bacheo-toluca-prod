@@ -273,8 +273,25 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
     if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
     const report = reportRes.rows[0];
 
+    // PHASE VALIDATION (ROBUSTNESS)
+    // If we receive 'caja' but it's already 'EN PROCESO' or 'TERMINADO', it's likely a late retry or error.
+    const currentStatus = report.status;
+    if (phase === 'caja' && currentStatus !== 'DETECTADO') {
+       return res.status(409).json({ error: `Conflicto de fase: el reporte ya está en estatus ${currentStatus}` });
+    }
+    if (phase === 'terminado' && currentStatus !== 'EN PROCESO') {
+       // Allow re-uploading 'terminado' if it's already 'TERMINADO' (retry case) but not if it's 'DETECTADO'
+       if (currentStatus === 'DETECTADO') {
+          return res.status(400).json({ error: 'No se puede subir foto FINAL si aún no ha pasado por CAJA' });
+       }
+    }
+
     if (req.file) {
-      const compressedBuffer = await sharp(req.file.path).resize(1200).jpeg({ quality: 60 }).toBuffer();
+      // Use efficient compression on server (800px is enough for records)
+      const compressedBuffer = await sharp(req.file.path)
+        .resize(1000, 1000, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 60 })
+        .toBuffer();
       const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
       
       const cid = report.contractid || report.contractId || '0';

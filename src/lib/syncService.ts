@@ -77,15 +77,30 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
 
   for (const report of pending) {
     try {
-      const fd = buildFormData(report);
-      const response = await fetch('/api/reports', { method: 'POST', body: fd });
-      if (response.ok) {
+      let response;
+      if (report.type === 'UPDATE') {
+        const fd = new FormData();
+        if (report.photoBuffer) {
+          fd.append('photo', bufferToBlob(report.photoBuffer), 'upload.jpg');
+        }
+        fd.append('phase', report.phase);
+        response = await fetch(`/api/reports/${report.fields.folio}/photo`, { 
+          method: 'POST', 
+          body: fd 
+        });
+      } else {
+        const fd = buildFormData(report);
+        response = await fetch('/api/reports', { method: 'POST', body: fd });
+      }
+
+      if (response.ok || response.status === 409) {
         await clearPendingReport(report.id!);
         synced++;
-        console.log(`[SYNC] ✅ Reporte ${report.fields.folio} sincronizado.`);
+        const msg = response.status === 409 ? 'ya existía' : 'sincronizado';
+        console.log(`[SYNC] ✅ Reporte ${report.fields.folio} ${msg}.`);
       } else {
         failed++;
-        console.warn(`[SYNC] ❌ Servidor rechazó reporte ${report.fields.folio}.`);
+        console.warn(`[SYNC] ❌ Servidor rechazó reporte ${report.fields.folio} con status ${response.status}.`);
       }
     } catch (err) {
       failed++;
