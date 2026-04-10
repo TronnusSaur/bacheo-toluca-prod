@@ -152,10 +152,12 @@ export default function LogScreen() {
         setCurrentStep('PHOTO')
         setSyncStatus(null)
         fetchReports()
-      } else {
-         setSyncStatus('ERROR DEL SERVIDOR')
       }
     } catch (err) {
+      setSyncStatus('FALLO DE RED (PATCH)')
+    }
+  }
+
   const handleMeasureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     const updated = { ...measures, [name]: value }
