@@ -277,10 +277,6 @@ export default function LogScreen() {
              </div>
           </div>
         </div>
-        {showSuccessModal && <SuccessModal onClose={() => setShowSuccessModal(false)} />}
-      </div>
-    )
-  }
       </div>
     )
   }
