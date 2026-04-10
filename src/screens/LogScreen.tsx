@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
 import { savePendingReport } from '../lib/offlineStore'
@@ -25,7 +25,9 @@ export default function LogScreen() {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [measures, setMeasures] = useState({ largo: '', ancho: '', profundidad: '', m2: 0 })
+  const [measures, setMeasures] = useState<{largo: string, ancho: string, profundidad: string, m2: number}>({ 
+    largo: '', ancho: '', profundidad: '', m2: 0 
+  })
   const [currentStep, setCurrentStep] = useState<'PHOTO' | 'CONTINUE'>('PHOTO')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -60,6 +62,32 @@ export default function LogScreen() {
 
   const handlePhotoClick = () => {
     fileInputRef.current?.click()
+  }
+
+  const compressImage = (file: File): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
+        };
+      };
+    });
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -161,7 +189,7 @@ export default function LogScreen() {
 
   const handleMeasureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    const updated = { ...measures, [name]: value }
+    const updated = { ...measures, [name]: value } as any
     if (name === 'largo' || name === 'ancho') {
       const l = parseFloat(name === 'largo' ? value : updated.largo) || 0
       const a = parseFloat(name === 'ancho' ? value : updated.ancho) || 0
@@ -170,31 +198,6 @@ export default function LogScreen() {
     setMeasures(updated)
   }
 
-  const compressImage = (file: File): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800;
-          let width = img.width;
-          let height = img.height;
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
-        };
-      };
-    });
-  };
 
   if (selectedReport) {
     const isDetected = selectedReport.status === 'DETECTADO'

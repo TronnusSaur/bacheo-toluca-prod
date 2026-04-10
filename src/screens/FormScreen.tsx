@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { Camera, MapPin, Search, ChevronRight, Layout, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
 import { savePendingReport, countPendingReports } from '../lib/offlineStore'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'

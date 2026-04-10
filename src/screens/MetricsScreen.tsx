@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
-import { Layout } from 'lucide-react'
+import { LayoutDashboard } from 'lucide-react'
 import './MetricsScreen.css'
 
 export default function MetricsScreen() {
@@ -104,7 +104,7 @@ export default function MetricsScreen() {
 
       <div className="bg-slate-900 p-6 rounded-[32px] shadow-2xl text-white relative overflow-hidden">
         <div className="absolute top-0 right-0 p-4 opacity-10">
-          <Layout size={48} />
+          <LayoutDashboard size={48} />
         </div>
         <p className="text-[10px] font-black text-cyan-400 tracking-widest uppercase mb-4">Información del Sistema</p>
         <p className="text-[11px] text-slate-400 leading-relaxed font-bold">
