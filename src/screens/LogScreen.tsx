@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
 import { savePendingReport, getPendingReports } from '../lib/offlineStore'
+import { compressImage } from '../lib/imageUtils'
 import './LogScreen.css'
 
 interface Report {
@@ -110,31 +111,6 @@ export default function LogScreen() {
     fileInputRef.current?.click()
   }
 
-  const compressImage = (file: File): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 800;
-          let width = img.width;
-          let height = img.height;
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          canvas.toBlob((blob) => resolve(blob as Blob), 'image/jpeg', 0.6);
-        };
-      };
-    });
-  }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -143,8 +119,15 @@ export default function LogScreen() {
     const phase = selectedReport.status === 'DETECTADO' ? 'caja' : 'terminado'
     setSyncStatus(`COMPRIMIENDO FOTO...`)
     
+    let compressedBlob: Blob | null = null;
     try {
-      const compressedBlob = await compressImage(file);
+      compressedBlob = await compressImage(file);
+    } catch (err) {
+      setSyncStatus(`ERROR AL COMPRIMIR: ${err instanceof Error ? err.message : 'Fallo desconocido'}`);
+      return;
+    }
+
+    try {
       const formData = new FormData()
       formData.append('photo', compressedBlob, 'upload.jpg')
       formData.append('phase', phase)
@@ -180,6 +163,9 @@ export default function LogScreen() {
     } catch (err) {
       // OFFLINE SUPPORT
       try {
+        if (!compressedBlob) throw new Error("No hay imagen comprimida disponible");
+        
+        const photoBuffer = await compressedBlob.arrayBuffer();
         const calculatedTipo = phase === 'caja' 
           ? (parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL')
           : (selectedReport.status === 'EN PROCESO' ? '' : 'SUPERFICIAL'); // fallback
@@ -215,7 +201,7 @@ export default function LogScreen() {
           setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
         }, 1500);
       } catch (dbErr) {
-        setSyncStatus('FALLO CRÍTICO: NO SE PUDO GUARDAR NI LOCALMENTE');
+        setSyncStatus(`FALLO CRÍTICO: ${dbErr instanceof Error ? dbErr.message : 'Error de almacenamiento'}`);
       }
     }
   }

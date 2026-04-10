@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
 import { savePendingReport, countPendingReports } from '../lib/offlineStore'
+import { compressImage } from '../lib/imageUtils'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
 
@@ -135,8 +136,19 @@ export default function FormScreen() {
     submission.append('colonia', formData.colonia);
     submission.append('tipoBache', formData.tipoBache);
 
-    if (fileInputRef.current?.files?.[0]) {
-      submission.append('photo', fileInputRef.current.files[0], 'inicial.jpg');
+    const photoFile = fileInputRef.current?.files?.[0];
+    let photoToUpload: Blob | File | undefined = photoFile;
+
+    if (photoFile) {
+      try {
+        photoToUpload = await compressImage(photoFile);
+      } catch (err) {
+        console.warn('[COMPRESS] Falló compresión, usando original:', err);
+      }
+    }
+
+    if (photoToUpload) {
+      submission.append('photo', photoToUpload, 'inicial.jpg');
     }
 
     try {
@@ -161,7 +173,12 @@ export default function FormScreen() {
   const saveToOffline = async (folio: string) => {
     try {
       const photoFile = fileInputRef.current?.files?.[0]
-      const photoBuffer = photoFile ? await photoFile.arrayBuffer() : null
+      let photoBuffer: ArrayBuffer | null = null;
+      
+      if (photoFile) {
+        const compressed = await compressImage(photoFile);
+        photoBuffer = await compressed.arrayBuffer();
+      }
 
       await savePendingReport({
         type: 'APERTURA',
