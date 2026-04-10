@@ -177,3 +177,140 @@ body {
   border: 1px solid #fecaca;
   animation: pulse 2s infinite;
 }
+
+/* Global Success Modal Overlay */
+.global-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background-color: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease;
+}
+
+.global-modal-content {
+  background: white;
+  width: 100%;
+  max-width: 360px;
+  border-radius: 40px;
+  padding: 2.5rem;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: zoomIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(0.85) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Global Dark Calculator Card (Premium) */
+.calc-card {
+  background-color: #0f172a;
+  border-radius: 2rem;
+  padding: 1.75rem;
+  color: white;
+  position: relative;
+  overflow: hidden;
+  margin: 1.5rem 0;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.calc-title {
+  font-size: 0.65rem;
+  font-weight: 900;
+  color: #22d3ee;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 1.25rem;
+  display: block;
+}
+
+.calc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.calc-item label {
+  font-size: 0.55rem;
+  font-weight: 900;
+  color: #64748b;
+  margin-bottom: 0.5rem;
+  display: block;
+  text-transform: uppercase;
+}
+
+.calc-number {
+  background-color: #1e293b;
+  border: 2px solid transparent;
+  color: white;
+  width: 100%;
+  padding: 0.85rem;
+  border-radius: 1rem;
+  font-size: 1.1rem;
+  font-weight: 900;
+  text-align: center;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.calc-number:focus {
+  border-color: #22d3ee;
+  background-color: #0f172a;
+}
+
+.calc-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  border-top: 2px solid #1e293b;
+  padding-top: 1.5rem;
+}
+
+.total-label {
+  font-size: 0.6rem;
+  font-weight: 900;
+  color: #475569;
+  text-transform: uppercase;
+}
+
+.total-display {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.huge-m2 {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #22d3ee;
+  line-height: 0.8;
+}
+
+.m2-unit {
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: #0891b2;
+}
+
+.badge-depth {
+  font-size: 0.5rem;
+  font-weight: 900;
+  padding: 0.25rem 0.6rem;
+  border-radius: 99px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.badge-depth.shallow { background: rgba(34, 211, 238, 0.1); color: #22d3ee; border: 1px solid rgba(34, 211, 238, 0.2); }
+.badge-depth.deep { background: rgba(244, 63, 94, 0.1); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.2); }

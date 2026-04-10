@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
+import SuccessModal from '../components/SuccessModal'
 import { savePendingReport } from '../lib/offlineStore'
 import './LogScreen.css'
 
@@ -235,19 +236,38 @@ export default function LogScreen() {
              </h3>
 
              <div className="flex flex-col gap-4">
-                {isDetected && currentStep === 'PHOTO' && (
-                  <div className="calc-card" style={{ padding: '1rem', background: '#f8fafc', borderRadius: '16px', marginBottom: '1rem' }}>
-                    <p className="text-[10px] font-black uppercase text-slate-400 mb-3">Medidas de Caja (M)</p>
-                    <div className="grid grid-cols-3 gap-2">
-                       <input type="number" name="largo" placeholder="LARGO" className="input-main text-center p-2" value={measures.largo} onChange={handleMeasureChange} />
-                       <input type="number" name="ancho" placeholder="ANCHO" className="input-main text-center p-2" value={measures.ancho} onChange={handleMeasureChange} />
-                       <input type="number" name="profundidad" placeholder="PROF." className="input-main text-center p-2" value={measures.profundidad} onChange={handleMeasureChange} />
-                    </div>
-                    <div className="mt-3 text-center">
-                       <span className="text-[10px] font-bold text-slate-500">M2 CALCULADOS: </span>
-                       <span className="text-sm font-black text-cyan-600">{measures.m2}</span>
-                    </div>
-                  </div>
+                {isDetected && (
+                   <div className="calc-card">
+                      <span className="calc-title">Medidas de Caja (M)</span>
+                      <div className="calc-grid">
+                         <div className="calc-item">
+                            <label>Largo</label>
+                            <input type="number" name="largo" className="calc-number" value={measures.largo} onChange={handleMeasureChange} placeholder="0" />
+                         </div>
+                         <div className="calc-item">
+                            <label>Ancho</label>
+                            <input type="number" name="ancho" className="calc-number" value={measures.ancho} onChange={handleMeasureChange} placeholder="0" />
+                         </div>
+                         <div className="calc-item">
+                            <label>Prof.</label>
+                            <input type="number" name="profundidad" className="calc-number" value={measures.profundidad} onChange={handleMeasureChange} placeholder="0" />
+                         </div>
+                      </div>
+                      
+                      <div className="calc-total">
+                         <span className="total-label">Subtotal Cuantificado</span>
+                         <div className="total-display">
+                            <span className="huge-m2">{measures.m2}</span>
+                            <span className="m2-unit">M²</span>
+                         </div>
+                      </div>
+
+                      <div className="mt-4 flex gap-2 justify-center">
+                         <span className={`badge-depth ${parseFloat(measures.profundidad) > 0.05 ? 'deep' : 'shallow'}`}>
+                            {parseFloat(measures.profundidad) > 0.05 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'}
+                         </span>
+                      </div>
+                   </div>
                 )}
 
                 {currentStep === 'PHOTO' ? (
@@ -336,25 +356,18 @@ export default function LogScreen() {
                </div>
             </div>
           ))}
+        <div className="p-4 text-center">
+           <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Fin de la bitácora</p>
         </div>
       )}
 
       {showSuccessModal && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
-           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in zoom-in duration-300">
-              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                 <CheckCircle size={32} />
-              </div>
-              <h2 className="text-xl font-black text-slate-800 mb-2">¡SINCRO EXITOSA!</h2>
-              <p className="text-xs text-slate-400 font-bold mb-8 uppercase tracking-widest">Información enviada correctamente</p>
-              <button 
-                className="w-full bg-slate-900 text-white rounded-2xl p-4 font-black uppercase tracking-widest text-[10px]" 
-                onClick={() => setShowSuccessModal(false)}
-              >
-                ENTENDIDO
-              </button>
-           </div>
-        </div>
+        <SuccessModal 
+          onClose={() => {
+            setShowSuccessModal(false)
+            setSelectedId(null)
+          }} 
+        />
       )}
     </div>
   )
