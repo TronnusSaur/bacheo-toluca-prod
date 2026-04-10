@@ -38,8 +38,20 @@ function loadGeoJSON() {
   if (!utbDataCache) {
     if (fs.existsSync(GEOJSON_FILE)) {
       const content = fs.readFileSync(GEOJSON_FILE, 'utf8');
-      utbDataCache = JSON.parse(content);
-      console.log('[API] UTB REAL.geojson cargado en memoria.');
+      const data = JSON.parse(content);
+      
+      // NORMALIZE TO UPPERCASE
+      data.features = data.features.map(f => ({
+        ...f,
+        properties: {
+          ...f.properties,
+          NOMDEL: f.properties.NOMDEL?.toUpperCase(),
+          NOMUT: f.properties.NOMUT?.toUpperCase()
+        }
+      }));
+
+      utbDataCache = data;
+      console.log('[API] UTB REAL.geojson cargado y normalizado.');
     } else {
       console.error('[API ERROR] UTB REAL.geojson no encontrado en:', GEOJSON_FILE);
     }
@@ -162,7 +174,13 @@ app.get('/api/reports', async (req, res) => {
 
 app.post('/api/reports', upload.single('photo'), async (req, res) => {
   try {
-    let { folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache } = req.body;
+    const { 
+      folio: manualFolio, contractId, empresaName, lat, lng, 
+      locationDesc, delegacion, colonia, tipoBache, 
+      calle1, calle2 
+    } = req.body;
+
+    let folio = manualFolio;
     
     // --- FOLIO GENERATION (CCFFFF) ---
     if (!folio || folio === 'undefined') {
@@ -190,9 +208,9 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
 
     // 1. Initial Insert into Postgres
     const result = await pool.query(
-      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'DETECTADO') RETURNING *`,
-      [folio, contractId, empresaName, lat, lng, largo, ancho, profundidad, m2, locationDesc, delegacion, colonia, tipoBache]
+      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO') RETURNING *`,
+      [folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle1, calle2]
     );
 
     const newReport = result.rows[0];
@@ -311,17 +329,29 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
       const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
       const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
 
-      await pool.query(
-        `UPDATE reports SET ${colName} = $1, status = $2 WHERE folio = $3`, 
-        [driveLink, nextStatus, folio]
-      );
-      
-      // Update Sheets (including status)
-      const sheetUpdates = phase === 'caja' 
-        ? { photocaja: driveLink, status: nextStatus } 
-        : { photofinal: driveLink, status: nextStatus };
-
-      await updateReportInSheet(process.env.SHEET_ID, folio, sheetUpdates);
+      if (phase === 'caja') {
+        const { largo, ancho, profundidad, m2 } = req.body;
+        await pool.query(
+          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6 WHERE folio = $7`, 
+          [driveLink, nextStatus, largo, ancho, profundidad, m2, folio]
+        );
+        
+        await updateReportInSheet(process.env.sheet_id || process.env.SHEET_ID, folio, { 
+          photocaja: driveLink, 
+          status: nextStatus,
+          largo, ancho, profundidad, m2
+        });
+      } else {
+        await pool.query(
+          `UPDATE reports SET ${colName} = $1, status = $2 WHERE folio = $3`, 
+          [driveLink, nextStatus, folio]
+        );
+        
+        await updateReportInSheet(process.env.sheet_id || process.env.SHEET_ID, folio, { 
+          photofinal: driveLink, 
+          status: nextStatus 
+        });
+      }
 
       res.json({ success: true, link: driveLink, status: nextStatus });
     } else {

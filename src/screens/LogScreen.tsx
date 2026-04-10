@@ -23,7 +23,8 @@ export default function LogScreen() {
   const [selectedContractFilter, setSelectedContractFilter] = useState<string>('ALL')
   const [selectedReport, setSelectedReport] = useState<Report | null>(null)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
-  const [successModal, setSuccessModal] = useState(false)
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [measures, setMeasures] = useState({ largo: '', ancho: '', profundidad: '', m2: 0 })
   const [currentStep, setCurrentStep] = useState<'PHOTO' | 'CONTINUE'>('PHOTO')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -72,19 +73,29 @@ export default function LogScreen() {
       const formData = new FormData()
       formData.append('photo', compressedBlob, 'upload.jpg')
       formData.append('phase', phase)
+      
+      if (phase === 'caja') {
+        formData.append('largo', measures.largo)
+        formData.append('ancho', measures.ancho)
+        formData.append('profundidad', measures.profundidad)
+        formData.append('m2', measures.m2.toString())
+      }
 
       const res = await fetch(`/api/reports/${selectedReport.folio}/photo`, {
         method: 'POST',
         body: formData
       })
       if (res.ok) {
-        setSyncStatus(`¡CAPTURA EXITOSA!`)
-        setCurrentStep('CONTINUE')
+        setShowSuccessModal(true)
+        setSyncStatus(null)
+        setCurrentStep('PHOTO') // Reset after success
         fetchReports()
+        setSelectedReport(null) // Go back to list
+        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 }) // RESET
       } else if (res.status === 409) {
         setSyncStatus(`INFO: ESTE FOLIO YA TIENE ESTA FASE REGISTRADA.`)
         fetchReports() // Re-sincronizar UI
-        setCurrentStep('CONTINUE')
+        setSelectedReport(null)
       } else {
         const error = await res.json()
         setSyncStatus(`ERROR: ${error.error || 'Fallo servidor'}`)
@@ -100,8 +111,13 @@ export default function LogScreen() {
             folio: selectedReport.folio,
             contractId: selectedReport.contractid || selectedReport.contractId || '',
             empresaName: '', // Not strictly needed for update
-            lat: 0, lng: 0, largo: '', ancho: '', profundidad: '', m2: '',
+            lat: 0, lng: 0, 
+            largo: measures.largo,
+            ancho: measures.ancho,
+            profundidad: measures.profundidad,
+            m2: measures.m2.toString(),
             locationDesc: selectedReport.locationdesc || selectedReport.locationDesc || '',
+            calle1: '', calle2: '', // Not needed for update
             delegacion: selectedReport.delegacion,
             colonia: selectedReport.colonia,
             tipoBache: ''
@@ -109,8 +125,9 @@ export default function LogScreen() {
           photoBuffer,
           savedAt: new Date().toISOString()
         });
-        setSyncStatus('📵 SIN RED - FOTO GUARDADA LOCALMENTE. SE SUBIRÁ AL RECUPERAR SEÑAL.')
-        setCurrentStep('CONTINUE')
+        setShowSuccessModal(true)
+        setSelectedReport(null)
+        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 })
       } catch (saveErr) {
         setSyncStatus('FALLO CRÍTICO: NO SE PUDO GUARDAR NI ONLINE NI OFFLINE.')
       }
@@ -130,25 +147,24 @@ export default function LogScreen() {
       })
       
       if (res.ok) {
-        if (nextStatus === 'TERMINADO') {
-          setSuccessModal(true)
-          setSelectedReport(null)
-          setCurrentStep('PHOTO')
-          setSyncStatus(null)
-          fetchReports()
-        } else {
-          const updated = await res.json()
-          setSelectedReport(updated)
-          setSyncStatus(`ETAPA ACTUALIZADA`)
-          setCurrentStep('PHOTO')
-          fetchReports()
-        }
+        setShowSuccessModal(true)
+        setSelectedReport(null)
+        setCurrentStep('PHOTO')
+        setSyncStatus(null)
+        fetchReports()
       } else {
          setSyncStatus('ERROR DEL SERVIDOR')
       }
     } catch (err) {
-      setSyncStatus('FALLO DE RED (PATCH)')
+  const handleMeasureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    const updated = { ...measures, [name]: value }
+    if (name === 'largo' || name === 'ancho') {
+      const l = parseFloat(name === 'largo' ? value : updated.largo) || 0
+      const a = parseFloat(name === 'ancho' ? value : updated.ancho) || 0
+      updated.m2 = parseFloat((l * a).toFixed(2))
     }
+    setMeasures(updated)
   }
 
   const compressImage = (file: File): Promise<Blob> => {
@@ -217,10 +233,30 @@ export default function LogScreen() {
              </h3>
 
              <div className="flex flex-col gap-4">
+                {isDetected && currentStep === 'PHOTO' && (
+                  <div className="calc-card" style={{ padding: '1rem', background: '#f8fafc', borderRadius: '16px', marginBottom: '1rem' }}>
+                    <p className="text-[10px] font-black uppercase text-slate-400 mb-3">Medidas de Caja (M)</p>
+                    <div className="grid grid-cols-3 gap-2">
+                       <input type="number" name="largo" placeholder="LARGO" className="input-main text-center p-2" value={measures.largo} onChange={handleMeasureChange} />
+                       <input type="number" name="ancho" placeholder="ANCHO" className="input-main text-center p-2" value={measures.ancho} onChange={handleMeasureChange} />
+                       <input type="number" name="profundidad" placeholder="PROF." className="input-main text-center p-2" value={measures.profundidad} onChange={handleMeasureChange} />
+                    </div>
+                    <div className="mt-3 text-center">
+                       <span className="text-[10px] font-bold text-slate-500">M2 CALCULADOS: </span>
+                       <span className="text-sm font-black text-cyan-600">{measures.m2}</span>
+                    </div>
+                  </div>
+                )}
+
                 {currentStep === 'PHOTO' ? (
-                  <button className="action-btn-main btn-upload" onClick={handlePhotoClick}>
+                  <button 
+                    className="action-btn-main btn-upload" 
+                    onClick={handlePhotoClick}
+                    disabled={isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)}
+                    style={{ opacity: (isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)) ? 0.5 : 1 }}
+                  >
                     <Camera size={20} />
-                    {isDetected ? 'TOMAR CAJA' : 'TOMAR FINAL'}
+                    {isDetected ? 'TOMAR FOTO CAJA' : 'TOMAR FOTO FINAL'}
                   </button>
                 ) : (
                   <button className="action-btn-main btn-next" onClick={handleContinue}>
@@ -239,6 +275,10 @@ export default function LogScreen() {
              </div>
           </div>
         </div>
+        {showSuccessModal && <SuccessModal onClose={() => setShowSuccessModal(false)} />}
+      </div>
+    )
+  }
       </div>
     )
   }
@@ -301,15 +341,18 @@ export default function LogScreen() {
         </div>
       )}
 
-      {successModal && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md">
-           <div className="modal-content text-center">
-              <div className="w-16 h-16 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                 <CheckCircle size={32} className="text-teal-500" />
+      {showSuccessModal && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
+           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in zoom-in duration-300">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                 <CheckCircle size={32} />
               </div>
-              <h2 className="text-xl font-black text-slate-800 mb-2">¡Completado!</h2>
-              <p className="text-xs text-slate-400 font-bold mb-8">Información sincronizada satisfactoriamente.</p>
-              <button className="action-btn-main" style={{ background: '#0f172a', color: 'white' }} onClick={() => setSuccessModal(false)}>
+              <h2 className="text-xl font-black text-slate-800 mb-2">¡SINCRO EXITOSA!</h2>
+              <p className="text-xs text-slate-400 font-bold mb-8 uppercase tracking-widest">Información enviada correctamente</p>
+              <button 
+                className="w-full bg-slate-900 text-white rounded-2xl p-4 font-black uppercase tracking-widest text-[10px]" 
+                onClick={() => setShowSuccessModal(false)}
+              >
                 ENTENDIDO
               </button>
            </div>

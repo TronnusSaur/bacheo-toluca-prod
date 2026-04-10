@@ -71,11 +71,48 @@ export default function MapScreen() {
     <div className="map-screen" style={{ height: 'calc(100vh - 120px)' }}>
       {/* Top UI Overlay with Split Layout */}
       <div className="map-top-bar">
-        {/* Left Side: Delegation Indicator */}
+        {/* Left Side: Delegation Selector (Dropdown) */}
         <div style={{ pointerEvents: 'auto' }}>
-           <div className="map-badge-nordic">
-             <Layers size={14} />
-             {loading ? 'CARGANDO...' : (selectedDelegation ? selectedDelegation : 'TOLUCA')}
+           <div className="map-badge-nordic" style={{ padding: '0 8px 0 0' }}>
+             <Layers size={14} style={{ marginLeft: '12px' }} />
+             <select 
+               className="delegation-select"
+               value={selectedDelegation || ''}
+               onChange={(e) => {
+                 const name = e.target.value;
+                 if (!name) {
+                   setSelectedDelegation(null);
+                   setMapConfig({ center: [19.2818, -99.6616], zoom: 12 });
+                   return;
+                 }
+                 setSelectedDelegation(name);
+                 // Find feature and center
+                 const feature = delegations?.features.find((f: any) => f.properties.NOMDEL === name);
+                 if (feature) {
+                   const center = L.geoJSON(feature).getBounds().getCenter();
+                   setMapConfig({ center: [center.lat, center.lng], zoom: 14 });
+                 }
+               }}
+               style={{ 
+                 background: 'transparent', 
+                 border: 'none', 
+                 color: 'inherit', 
+                 fontFamily: 'inherit', 
+                 fontSize: '0.65rem', 
+                 fontWeight: 900, 
+                 padding: '10px',
+                 outline: 'none',
+                 cursor: 'pointer',
+                 width: '120px'
+               }}
+             >
+                <option value="">TOLUCA (TODAS)</option>
+                {delegations?.features.map((f: any) => (
+                  <option key={f.properties.NOMDEL} value={f.properties.NOMDEL}>
+                    {f.properties.NOMDEL}
+                  </option>
+                ))}
+             </select>
            </div>
            
            {selectedDelegation && (
@@ -83,7 +120,7 @@ export default function MapScreen() {
                setSelectedDelegation(null);
                setMapConfig({ center: [19.2818, -99.6616], zoom: 12 });
              }}>
-               <ChevronLeft size={14} /> VOLVER
+               <ChevronLeft size={14} /> RESTABLECER
              </button>
            )}
         </div>

@@ -67,6 +67,8 @@ export async function initDb() {
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoCaja TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS photoFinal TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;");
+    await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_1 TEXT;");
+    await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_2 TEXT;");
 
     // DATA FIX: Resynchronize status for reports stuck due to the previous bug
     console.log('[DB] Ejecutando sincronización de estatus...');

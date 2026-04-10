@@ -37,7 +37,11 @@ function mapReportToRow(report) {
     report.m2 || '0',
     report.tipobache || report.tipoBache || '',
     report.status || 'DETECTADO',
-    report.photourl || report.photoUrl || ''
+    report.photourl || report.photoUrl || '',
+    '', // Placeholder for Photo Caja
+    '', // Placeholder for Photo Final
+    report.calle_1 || report.calle1 || '', // New Calle 1
+    report.calle_2 || report.calle2 || ''  // New Calle 2
   ];
 }
 
@@ -99,9 +103,18 @@ export async function updateReportInSheet(sheetId, folio, updates) {
     const sheetRow = rowIndex + 1;
 
     // Photos and Status columns: P (photoCaja), Q (photoFinal), N (status)
+    const { largo, ancho, profundidad, m2, status } = updates;
     const photoCaja = updates.photocaja || updates.photoCaja;
     const photoFinal = updates.photofinal || updates.photoFinal;
-    const status = updates.status;
+
+    if (largo) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `Hoja 1!I${sheetRow}:L${sheetRow}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[largo, ancho, profundidad, m2]] },
+      });
+    }
 
     if (photoCaja) {
       await sheets.spreadsheets.values.update({

@@ -31,6 +31,8 @@ function buildFormData(report: PendingReport): FormData {
   fd.append('profundidad', f.profundidad);
   fd.append('m2', f.m2);
   fd.append('locationDesc', f.locationDesc);
+  fd.append('calle1', f.calle1);
+  fd.append('calle2', f.calle2);
   fd.append('delegacion', f.delegacion);
   fd.append('colonia', f.colonia);
   fd.append('tipoBache', f.tipoBache);
@@ -83,7 +85,12 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
         if (report.photoBuffer) {
           fd.append('photo', bufferToBlob(report.photoBuffer), 'upload.jpg');
         }
-        fd.append('phase', report.phase);
+        if (report.phase === 'caja') {
+          fd.append('largo', report.fields.largo);
+          fd.append('ancho', report.fields.ancho);
+          fd.append('profundidad', report.fields.profundidad);
+          fd.append('m2', report.fields.m2);
+        }
         response = await fetch(`/api/reports/${report.fields.folio}/photo`, { 
           method: 'POST', 
           body: fd 

@@ -20,10 +20,8 @@ export default function FormScreen() {
   const [formData, setFormData] = useState({
     contractId: '',
     locationDesc: '',
-    largo: '',
-    ancho: '',
-    profundidad: '',
-    m2: 0,
+    calle1: '',
+    calle2: '',
     delegacion: '---',
     colonia: '---',
     lat: 0,
@@ -58,7 +56,13 @@ export default function FormScreen() {
   }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
+    let { name, value } = e.target
+    
+    // AUTO-UPPERCASE for text fields
+    if (['locationDesc', 'calle1', 'calle2'].includes(name)) {
+      value = value.toUpperCase()
+    }
+
     const updatedData = { ...formData, [name]: value }
     
     if (name === 'contractId') {
@@ -67,16 +71,6 @@ export default function FormScreen() {
       if (contract && formData.delegacion === '---') {
         updatedData.delegacion = contract.delegacion
       }
-    }
-
-    if (name === 'largo' || name === 'ancho') {
-      const largoVal = parseFloat(name === 'largo' ? value : formData.largo) || 0
-      const anchoVal = parseFloat(name === 'ancho' ? value : formData.ancho) || 0
-      updatedData.m2 = parseFloat((largoVal * anchoVal).toFixed(2))
-    }
-    
-    if (name === 'profundidad') {
-      updatedData.tipoBache = parseFloat(value) > 0.07 ? 'PROFUNDO' : 'SUPERFICIAL'
     }
 
     setFormData(updatedData)
@@ -135,10 +129,8 @@ export default function FormScreen() {
     setFormData({
       contractId: '',
       locationDesc: '',
-      largo: '',
-      ancho: '',
-      profundidad: '',
-      m2: 0,
+      calle1: '',
+      calle2: '',
       delegacion: '---',
       colonia: '---',
       lat: 0,
@@ -177,11 +169,9 @@ export default function FormScreen() {
     submission.append('phase', 'inicial');
     submission.append('lat', formData.lat.toString());
     submission.append('lng', formData.lng.toString());
-    submission.append('largo', formData.largo);
-    submission.append('ancho', formData.ancho);
-    submission.append('profundidad', formData.profundidad);
-    submission.append('m2', formData.m2.toString());
     submission.append('locationDesc', formData.locationDesc);
+    submission.append('calle1', formData.calle1);
+    submission.append('calle2', formData.calle2);
     submission.append('delegacion', formData.delegacion);
     submission.append('colonia', formData.colonia);
     submission.append('tipoBache', formData.tipoBache);
@@ -217,11 +207,9 @@ export default function FormScreen() {
             empresaName: selectedContract.empresa,
             lat: formData.lat,
             lng: formData.lng,
-            largo: formData.largo,
-            ancho: formData.ancho,
-            profundidad: formData.profundidad,
-            m2: formData.m2.toString(),
             locationDesc: formData.locationDesc,
+            calle1: formData.calle1,
+            calle2: formData.calle2,
             delegacion: formData.delegacion,
             colonia: formData.colonia,
             tipoBache: formData.tipoBache,
@@ -366,76 +354,43 @@ export default function FormScreen() {
         )}
 
         <div className="input-group">
-          <label className="field-label">Referencia de Ubicación*</label>
+          <label className="field-label">Calle del Bache* (MAYÚSCULAS)</label>
           <input 
             name="locationDesc"
             className="input-main"
-            placeholder="Calle y Número..."
+            placeholder="NOMBRE DE LA CALLE..."
             value={formData.locationDesc}
             onChange={handleInputChange}
             required
           />
         </div>
 
-        <div className="calc-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-             <span className="calc-title" style={{ margin: 0 }}>Dimensiones de Obra</span>
-             {formData.profundidad && (
-                 <span className={`badge-depth ${parseFloat(formData.profundidad) > 0.07 ? 'deep' : 'shallow'}`}>
-                   {parseFloat(formData.profundidad) > 0.07 ? 'PROFUNDO (>0.07m)' : 'SUPERFICIAL (≤0.07m)'}
-                 </span>
-             )}
+        <div className="input-row" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+          <div className="input-group">
+            <label className="field-label">Entre Calle 1*</label>
+            <input 
+              name="calle1"
+              className="input-main"
+              placeholder="CALLE 1..."
+              value={formData.calle1}
+              onChange={handleInputChange}
+              required
+            />
           </div>
-          
-          <div className="calc-grid">
-            <div className="calc-item">
-              <label>Largo (M)</label>
-              <input 
-                name="largo"
-                type="number"
-                step="0.1"
-                className="calc-number"
-                value={formData.largo}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
-            <div className="calc-item">
-              <label>Ancho (M)</label>
-              <input 
-                name="ancho"
-                type="number"
-                step="0.1"
-                className="calc-number"
-                value={formData.ancho}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
-            <div className="calc-item">
-              <label>Prof. (M)</label>
-              <input 
-                name="profundidad"
-                type="number"
-                step="0.01"
-                className="calc-number"
-                value={formData.profundidad}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="calc-total">
-            <span className="total-label">SUPERFICIE CALCULADA</span>
-            <div className="total-display">
-              <span className="huge-m2">{formData.m2}</span>
-              <span className="m2-unit">M²</span>
-            </div>
+          <div className="input-group">
+            <label className="field-label">Entre Calle 2*</label>
+            <input 
+              name="calle2"
+              className="input-main"
+              placeholder="CALLE 2..."
+              value={formData.calle2}
+              onChange={handleInputChange}
+              required
+            />
           </div>
         </div>
 
-        <div className="form-footer">
+        <div className="form-footer" style={{ marginTop: '2rem' }}>
           <label className={`btn-photo ${hasPhoto ? 'btn-photo-success' : ''}`}>
             <input 
               ref={fileInputRef}
@@ -446,16 +401,25 @@ export default function FormScreen() {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
-                  setSubmitStatus(`[PRUEBA] Foto capturada: ${file.name}`);
+                  setSubmitStatus(`[FOTO CAPTURADA]`);
                   setHasPhoto(true);
                 }
               }}
             />
-            {hasPhoto ? <CheckCircle size={24} className="text-emerald-500" /> : <Camera size={24} />}
-            <span>{hasPhoto ? 'FOTO LISTA' : 'TOMAR FOTO'}</span>
+            <Camera size={20} />
+            {hasPhoto ? 'FOTO LISTA' : 'TOMAR FOTO INICIAL*'}
           </label>
-          <button type="submit" className="btn-submit">
-            GUARDAR APERTURA
+
+          <button 
+            type="submit" 
+            className="btn-submit" 
+            disabled={!hasPhoto || !formData.lat || !selectedContract || folioSuffix.length !== 4}
+            style={{ 
+              opacity: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 1 : 0.5,
+              cursor: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 'pointer' : 'not-allowed'
+            }}
+          >
+            GUARDAR REPORTE
           </button>
         </div>
       </form>

@@ -45,6 +45,8 @@ export interface PendingReport {
     profundidad: string;
     m2: string;
     locationDesc: string;
+    calle1: string;
+    calle2: string;
     delegacion: string;
     colonia: string;
     tipoBache: string;
