@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Camera, MapPin, Search, ChevronRight, Layout, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
-import { savePendingReport, getPendingReportsCount } from '../lib/offlineStore'
+import { savePendingReport, countPendingReports } from '../lib/offlineStore'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
 
@@ -43,7 +43,7 @@ export default function FormScreen() {
   }
 
   const updateOfflineCount = async () => {
-    const count = await getPendingReportsCount()
+    const count = await countPendingReports()
     setOfflineCount(count)
     console.log('[DEBUG] Reportes offline:', count)
   }
@@ -166,6 +166,11 @@ export default function FormScreen() {
     updateOfflineCount()
   }
 
+  const setPhotoState = (val: any) => {
+    setHasPhoto(!!val)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const resetForm = () => {
     setPhotoState(null)
     setFormData(prev => ({ 
@@ -179,11 +184,6 @@ export default function FormScreen() {
       lng: 0 
     }))
     setFolioSuffix('')
-  }
-
-  const setPhotoState = (val: any) => {
-    setHasPhoto(!!val)
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   return (

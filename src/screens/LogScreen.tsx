@@ -365,7 +365,7 @@ export default function LogScreen() {
         <SuccessModal 
           onClose={() => {
             setShowSuccessModal(false)
-            setSelectedId(null)
+            setSelectedReport(null)
           }} 
         />
       )}

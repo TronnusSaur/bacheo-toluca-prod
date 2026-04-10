@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { Layout } from 'lucide-react'
 import './MetricsScreen.css'
 
 export default function MetricsScreen() {
