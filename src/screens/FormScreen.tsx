@@ -119,7 +119,7 @@ export default function FormScreen() {
     setIsUploading(true)
     
     const prefix = getContractPrefix(selectedContract.id);
-    const folio = `129${prefix}${folioSuffix}`;
+    const folio = `${prefix}${folioSuffix}`;
 
     const submission = new FormData();
     submission.append('folio', folio);
@@ -235,9 +235,9 @@ export default function FormScreen() {
 
         {selectedContract && (
           <div className="input-group">
-            <label className="field-label">Folio del Bache (129{getContractPrefix(selectedContract.id)}XXXX)*</label>
+            <label className="field-label">Folio del Bache ({getContractPrefix(selectedContract.id)}XXXX)*</label>
             <div className="folio-input-row">
-              <span className="folio-prefix">129{getContractPrefix(selectedContract.id)}</span>
+              <span className="folio-prefix">{getContractPrefix(selectedContract.id)}</span>
               <input
                 type="text"
                 inputMode="numeric"
