@@ -52,6 +52,12 @@
   background: #f8fafc;
 }
 
+.report-card.card-locked {
+  opacity: 0.6;
+  pointer-events: none;
+  border-left: 4px solid #10b981;
+}
+
 .card-top {
   display: flex;
   justify-content: space-between;

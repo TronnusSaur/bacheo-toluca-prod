@@ -74,9 +74,11 @@ export default function LogScreen() {
 
       // Marcar reportes del servidor que tienen actualizaciones pendientes locales
       finalReports.forEach(r => {
-        const update = pending.find(p => p.type === 'UPDATE' && p.fields.folio === r.folio)
-        if (update) {
-          r.status = update.phase === 'caja' ? 'EN PROCESO' : 'TERMINADO'
+        const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields.folio === r.folio)
+        if (relatedUpdates.length > 0) {
+          // Si hay UN solo update de 'terminado' o varios que incluyan 'terminado', el estatus es TERMINADO
+          const hasTerminado = relatedUpdates.some(up => up.phase === 'terminado')
+          r.status = hasTerminado ? 'TERMINADO' : 'EN PROCESO'
           r.isOffline = true
         }
       })
@@ -148,10 +150,12 @@ export default function LogScreen() {
       formData.append('phase', phase)
       
       if (phase === 'caja') {
+        const calculatedTipo = parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'
         formData.append('largo', measures.largo)
         formData.append('ancho', measures.ancho)
         formData.append('profundidad', measures.profundidad)
         formData.append('m2', measures.m2.toString())
+        formData.append('tipoBache', calculatedTipo)
       }
 
       const res = await fetch(`/api/reports/${selectedReport.folio}/photo`, {
@@ -176,7 +180,10 @@ export default function LogScreen() {
     } catch (err) {
       // OFFLINE SUPPORT
       try {
-        const photoBuffer = await file.arrayBuffer();
+        const calculatedTipo = phase === 'caja' 
+          ? (parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL')
+          : (selectedReport.status === 'EN PROCESO' ? '' : 'SUPERFICIAL'); // fallback
+
         await savePendingReport({
           type: 'UPDATE',
           phase: phase as any,
@@ -193,7 +200,7 @@ export default function LogScreen() {
             calle1: '', calle2: '',
             delegacion: selectedReport.delegacion,
             colonia: selectedReport.colonia,
-            tipoBache: ''
+            tipoBache: calculatedTipo
           },
           photoBuffer,
           savedAt: new Date().toISOString()
@@ -401,14 +408,20 @@ export default function LogScreen() {
           {reports
             .filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter)
             .map((report) => (
-            <div key={report.folio} className="report-card" onClick={() => setSelectedReport(report)}>
+            <div 
+              key={report.folio} 
+              className={`report-card ${report.status === 'TERMINADO' ? 'card-locked' : ''}`} 
+              onClick={() => report.status !== 'TERMINADO' && setSelectedReport(report)}
+            >
                <div className="card-top">
                   <span className="folio-tag">
                      {report.isOffline && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
                      {report.folio}
                   </span>
                   <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')} ${report.isOffline ? 'offline-tint' : ''}`}>
-                    {report.isOffline ? 'PENDIENTE' : report.status}
+                    {report.isOffline 
+                      ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 
+                      : report.status}
                   </span>
                </div>
                <div className="card-body">

@@ -106,6 +106,7 @@ export async function updateReportInSheet(sheetId, folio, updates) {
     const { largo, ancho, profundidad, m2, status } = updates;
     const photoCaja = updates.photocaja || updates.photoCaja;
     const photoFinal = updates.photofinal || updates.photoFinal;
+    const tipoBache = updates.tipobache || updates.tipoBache;
 
     if (largo) {
       await sheets.spreadsheets.values.update({
@@ -138,6 +139,14 @@ export async function updateReportInSheet(sheetId, folio, updates) {
         range: `Hoja 1!N${sheetRow}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: { values: [[status]] },
+      });
+    }
+    if (tipoBache) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `Hoja 1!M${sheetRow}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[tipoBache]] },
       });
     }
     

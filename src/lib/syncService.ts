@@ -93,6 +93,9 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
           fd.append('ancho', report.fields.ancho || '0');
           fd.append('profundidad', report.fields.profundidad || '0');
           fd.append('m2', report.fields.m2 || '0');
+          if (report.fields.tipoBache) {
+            fd.append('tipoBache', report.fields.tipoBache);
+          }
         }
         response = await fetch(`/api/reports/${report.fields.folio}/photo`, { 
           method: 'POST', 

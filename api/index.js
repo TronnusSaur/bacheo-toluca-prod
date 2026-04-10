@@ -335,16 +335,17 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
       const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
 
       if (phase === 'caja') {
-        const { largo, ancho, profundidad, m2 } = req.body;
+        const { largo, ancho, profundidad, m2, tipoBache } = req.body;
         await pool.query(
-          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6 WHERE folio = $7`, 
-          [driveLink, nextStatus, largo, ancho, profundidad, m2, folio]
+          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6, tipobache = $7 WHERE folio = $8`, 
+          [driveLink, nextStatus, largo, ancho, profundidad, m2, tipoBache, folio]
         );
         
         await updateReportInSheet(process.env.sheet_id || process.env.SHEET_ID, folio, { 
           photocaja: driveLink, 
           status: nextStatus,
-          largo, ancho, profundidad, m2
+          largo, ancho, profundidad, m2,
+          tipobache: tipoBache
         });
       } else {
         await pool.query(
