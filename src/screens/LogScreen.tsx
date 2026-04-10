@@ -36,8 +36,7 @@ export default function LogScreen() {
     try {
       const response = await fetch('/api/reports')
       const data = await response.json()
-      // Filter out TERMINADO reports for follow-up board
-      setReports(data.filter((r: any) => r.status !== 'TERMINADO'))
+      setReports(data)
     } catch (err) {
       console.error('[SIMULACIÓN ERROR] No se pudieron cargar reportes.')
     } finally {
@@ -202,6 +201,7 @@ export default function LogScreen() {
   if (selectedReport) {
     const isDetected = selectedReport.status === 'DETECTADO'
     const isInProcess = selectedReport.status === 'EN PROCESO'
+    const isFinished = selectedReport.status === 'TERMINADO'
 
     return (
       <div className="log-container detail-view">
@@ -215,7 +215,7 @@ export default function LogScreen() {
                 <span className="folio-tag">{selectedReport.folio}</span>
                 <p className="subtitle-main" style={{ color: '#94a3b8', fontSize: '0.6rem' }}>{selectedReport.contractid || selectedReport.contractId}</p>
              </div>
-             <span className={`status-tag ${isDetected ? 'status-detected' : 'status-process'}`}>
+              <span className={`status-tag ${isDetected ? 'status-detected' : (isInProcess ? 'status-process' : 'status-finished')}`}>
                 {selectedReport.status}
              </span>
           </div>
@@ -230,75 +230,83 @@ export default function LogScreen() {
              </div>
           </div>
 
-          <div className="action-module">
-             <h3 className="text-sm font-black uppercase tracking-wider mb-6 text-center">
-                {currentStep === 'PHOTO' 
-                   ? (isDetected ? 'Subir Foto Caja' : 'Subir Foto Final')
-                   : 'Confirmar Seguimiento'
-                }
-             </h3>
+          {!isFinished ? (
+            <div className="action-module">
+               <h3 className="text-sm font-black uppercase tracking-wider mb-6 text-center">
+                  {currentStep === 'PHOTO' 
+                     ? (isDetected ? 'Subir Foto Caja' : 'Subir Foto Final')
+                     : 'Confirmar Seguimiento'
+                  }
+               </h3>
 
-             <div className="flex flex-col gap-4">
-                {isDetected && (
-                   <div className="calc-card">
-                      <span className="calc-title">Medidas de Caja (M)</span>
-                      <div className="calc-grid">
-                         <div className="calc-item">
-                            <label>Largo</label>
-                            <input type="number" name="largo" className="calc-number" value={measures.largo} onChange={handleMeasureChange} placeholder="0" />
-                         </div>
-                         <div className="calc-item">
-                            <label>Ancho</label>
-                            <input type="number" name="ancho" className="calc-number" value={measures.ancho} onChange={handleMeasureChange} placeholder="0" />
-                         </div>
-                         <div className="calc-item">
-                            <label>Prof.</label>
-                            <input type="number" name="profundidad" className="calc-number" value={measures.profundidad} onChange={handleMeasureChange} placeholder="0" />
-                         </div>
-                      </div>
-                      
-                      <div className="calc-total">
-                         <span className="total-label">Subtotal Cuantificado</span>
-                         <div className="total-display">
-                            <span className="huge-m2">{measures.m2}</span>
-                            <span className="m2-unit">M²</span>
-                         </div>
-                      </div>
+               <div className="flex flex-col gap-4">
+                  {isDetected && (
+                     <div className="calc-card">
+                        <span className="calc-title">Medidas de Caja (M)</span>
+                        <div className="calc-grid">
+                           <div className="calc-item">
+                              <label>Largo</label>
+                              <input type="number" name="largo" className="calc-number" value={measures.largo} onChange={handleMeasureChange} placeholder="0" />
+                           </div>
+                           <div className="calc-item">
+                              <label>Ancho</label>
+                              <input type="number" name="ancho" className="calc-number" value={measures.ancho} onChange={handleMeasureChange} placeholder="0" />
+                           </div>
+                           <div className="calc-item">
+                              <label>Prof.</label>
+                              <input type="number" name="profundidad" className="calc-number" value={measures.profundidad} onChange={handleMeasureChange} placeholder="0" />
+                           </div>
+                        </div>
+                        
+                        <div className="calc-total">
+                           <span className="total-label">Subtotal Cuantificado</span>
+                           <div className="total-display">
+                              <span className="huge-m2">{measures.m2}</span>
+                              <span className="m2-unit">M²</span>
+                           </div>
+                        </div>
 
-                      <div className="mt-4 flex gap-2 justify-center">
-                         <span className={`badge-depth ${parseFloat(measures.profundidad) > 0.05 ? 'deep' : 'shallow'}`}>
-                            {parseFloat(measures.profundidad) > 0.05 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'}
-                         </span>
-                      </div>
-                   </div>
-                )}
+                        <div className="mt-4 flex gap-2 justify-center">
+                           <span className={`badge-depth ${parseFloat(measures.profundidad) > 0.05 ? 'deep' : 'shallow'}`}>
+                              {parseFloat(measures.profundidad) > 0.05 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'}
+                           </span>
+                        </div>
+                     </div>
+                  )}
 
-                {currentStep === 'PHOTO' ? (
-                  <button 
-                    className="action-btn-main btn-upload" 
-                    onClick={handlePhotoClick}
-                    disabled={isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)}
-                    style={{ opacity: (isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)) ? 0.5 : 1 }}
-                  >
-                    <Camera size={20} />
-                    {isDetected ? 'TOMAR FOTO CAJA' : 'TOMAR FOTO FINAL'}
-                  </button>
-                ) : (
-                  <button className="action-btn-main btn-next" onClick={handleContinue}>
-                    {isInProcess ? 'TERMINAR REPORTE' : 'CONFIRMAR CAJA'}
-                    <ArrowRight size={20} />
-                  </button>
-                )}
-                
-                {syncStatus && (
-                   <div className={`p-4 rounded-2xl text-center text-[8px] font-black uppercase tracking-widest border transition-all ${syncStatus.includes('FALLO') || syncStatus.includes('ERROR') ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
-                    {syncStatus}
-                  </div>
-                )}
-                
-                <input type="file" accept="image/*" capture="environment" hidden ref={fileInputRef} onChange={handleFileChange} />
-             </div>
-          </div>
+                  {currentStep === 'PHOTO' ? (
+                    <button 
+                      className="action-btn-main btn-upload" 
+                      onClick={handlePhotoClick}
+                      disabled={isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)}
+                      style={{ opacity: (isDetected && (!measures.largo || !measures.ancho || !measures.profundidad)) ? 0.5 : 1 }}
+                    >
+                      <Camera size={20} />
+                      {isDetected ? 'TOMAR FOTO CAJA' : 'TOMAR FOTO FINAL'}
+                    </button>
+                  ) : (
+                    <button className="action-btn-main btn-next" onClick={handleContinue}>
+                      {isInProcess ? 'TERMINAR REPORTE' : 'CONFIRMAR CAJA'}
+                      <ArrowRight size={20} />
+                    </button>
+                  )}
+                  
+                  {syncStatus && (
+                     <div className={`p-4 rounded-2xl text-center text-[8px] font-black uppercase tracking-widest border transition-all ${syncStatus.includes('FALLO') || syncStatus.includes('ERROR') ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+                      {syncStatus}
+                    </div>
+                  )}
+                  
+                  <input type="file" accept="image/*" capture="environment" hidden ref={fileInputRef} onChange={handleFileChange} />
+               </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center" style={{ background: '#f0fdf4', borderRadius: '32px', marginTop: '2rem', border: '1px solid #dcfce7' }}>
+              <CheckCircle size={40} className="mx-auto text-emerald-500 mb-4" />
+              <h3 className="text-emerald-900 font-black uppercase text-sm mb-2">Proceso Concluido</h3>
+              <p className="text-emerald-700 text-[10px] font-bold leading-relaxed">Este folio ha sido reparado y validado. No requiere acciones adicionales por parte del supervisor.</p>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -345,7 +353,7 @@ export default function LogScreen() {
             <div key={report.id} className="report-card" onClick={() => setSelectedReport(report)}>
                <div className="card-top">
                   <span className="folio-tag">{report.folio}</span>
-                  <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : 'status-process'}`}>
+                  <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')}`}>
                     {report.status}
                   </span>
                </div>
