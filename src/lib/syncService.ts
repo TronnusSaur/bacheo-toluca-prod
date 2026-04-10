@@ -82,14 +82,17 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
       let response;
       if (report.type === 'UPDATE') {
         const fd = new FormData();
+        // IMPORTANTE: Incluir la fase (caja o terminado)
+        if (report.phase) fd.append('phase', report.phase);
+        
         if (report.photoBuffer) {
           fd.append('photo', bufferToBlob(report.photoBuffer), 'upload.jpg');
         }
         if (report.phase === 'caja') {
-          fd.append('largo', report.fields.largo);
-          fd.append('ancho', report.fields.ancho);
-          fd.append('profundidad', report.fields.profundidad);
-          fd.append('m2', report.fields.m2);
+          fd.append('largo', report.fields.largo || '0');
+          fd.append('ancho', report.fields.ancho || '0');
+          fd.append('profundidad', report.fields.profundidad || '0');
+          fd.append('m2', report.fields.m2 || '0');
         }
         response = await fetch(`/api/reports/${report.fields.folio}/photo`, { 
           method: 'POST', 

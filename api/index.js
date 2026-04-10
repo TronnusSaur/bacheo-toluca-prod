@@ -286,6 +286,11 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
   const { folio } = req.params;
   const { phase } = req.body; // 'caja' o 'terminado'
 
+  if (!phase) {
+    console.error(`[PHOTO ERROR] Folio ${folio} intentó subir foto sin phase.`);
+    return res.status(400).json({ error: 'Falta especificar la fase (phase) del reporte (caja/terminado)' });
+  }
+
   try {
     const reportRes = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
     if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
