@@ -337,7 +337,8 @@ export default function LogScreen() {
           <p className="subtitle-main" style={{ color: '#cbd5e1' }}>Sin reportes en este contrato</p>
         </div>
       ) : (
-        <div className="log-list">
+        <>
+          <div className="log-list">
           {reports
             .filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter)
             .map((report) => (
@@ -358,10 +359,12 @@ export default function LogScreen() {
                   </div>
                </div>
             </div>
-          ))}
-        <div className="p-4 text-center">
-           <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Fin de la bitácora</p>
-        </div>
+            ))}
+          </div>
+          <div className="p-4 text-center">
+             <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Fin de la bitácora</p>
+          </div>
+        </>
       )}
 
       {showSuccessModal && (
