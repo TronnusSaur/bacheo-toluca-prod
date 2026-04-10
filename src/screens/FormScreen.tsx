@@ -159,11 +159,39 @@ export default function FormScreen() {
   }
 
   const saveToOffline = async (folio: string) => {
-    // Note: In real app we'd save the full blob, here we call offlineStore
-    // Simplified for this restore
-    setShowSuccessModal(true)
-    resetForm()
-    updateOfflineCount()
+    try {
+      const photoFile = fileInputRef.current?.files?.[0]
+      const photoBuffer = photoFile ? await photoFile.arrayBuffer() : null
+
+      await savePendingReport({
+        type: 'APERTURA',
+        phase: 'inicial',
+        fields: {
+          folio,
+          contractId: formData.contractId,
+          empresaName: selectedContract?.empresa || '',
+          lat: formData.lat,
+          lng: formData.lng,
+          largo: '0', ancho: '0', profundidad: '0', m2: '0',
+          locationDesc: formData.locationDesc,
+          calle1: formData.calle1,
+          calle2: formData.calle2,
+          delegacion: formData.delegacion,
+          colonia: formData.colonia,
+          tipoBache: formData.tipoBache
+        },
+        photoBuffer,
+        savedAt: new Date().toISOString()
+      })
+      
+      console.log('[OFFLINE] Reporte guardado localmente ok.');
+      setShowSuccessModal(true);
+      resetForm();
+      updateOfflineCount();
+    } catch (e) {
+      console.error('[OFFLINE ERROR] No se pudo guardar ni localmente:', e);
+      alert('Error crítico: no se pudo guardar el reporte ni siquiera en modo offline. Revise espacio en disco.');
+    }
   }
 
   const setPhotoState = (val: any) => {

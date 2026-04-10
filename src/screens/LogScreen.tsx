@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
-import { savePendingReport } from '../lib/offlineStore'
+import { savePendingReport, getPendingReports } from '../lib/offlineStore'
 import './LogScreen.css'
 
 interface Report {
@@ -15,6 +15,7 @@ interface Report {
   colonia: string;
   status: string;
   created_at: string;
+  isOffline?: boolean;
 }
 
 export default function LogScreen() {
@@ -34,11 +35,55 @@ export default function LogScreen() {
   const fetchReports = async () => {
     setLoading(true)
     try {
-      const response = await fetch('/api/reports')
-      const data = await response.json()
-      setReports(data)
+      // 1. Cargar reportes del servidor
+      let apiReports: Report[] = []
+      try {
+        const response = await fetch('/api/reports')
+        apiReports = await response.json()
+      } catch (e) {
+        console.warn('[OFFLINE] No se pudo conectar al servidor, usando solo datos locales.')
+      }
+
+      // 2. Cargar reportes pendientes de IndexedDB
+      const pending = await getPendingReports()
+      
+      // 3. Mapear aperturas pendientes a formato Report
+      const pendingAperturas = pending
+        .filter(p => p.type === 'APERTURA')
+        .map(p => ({
+          id: -(p.id || Date.now()), // ID negativo temporal
+          folio: p.fields.folio,
+          contractId: p.fields.contractId,
+          locationDesc: p.fields.locationDesc,
+          delegacion: p.fields.delegacion,
+          colonia: p.fields.colonia,
+          status: 'DETECTADO',
+          created_at: p.savedAt,
+          isOffline: true
+        }))
+
+      // 4. Integrar estados de actualizaciones pendientes
+      const finalReports = [...apiReports]
+      
+      // Añadir aperturas que no están en el servidor
+      pendingAperturas.forEach(pa => {
+        if (!finalReports.find(r => r.folio === pa.folio)) {
+          finalReports.unshift(pa as any)
+        }
+      })
+
+      // Marcar reportes del servidor que tienen actualizaciones pendientes locales
+      finalReports.forEach(r => {
+        const update = pending.find(p => p.type === 'UPDATE' && p.fields.folio === r.folio)
+        if (update) {
+          r.status = update.phase === 'caja' ? 'EN PROCESO' : 'TERMINADO'
+          r.isOffline = true
+        }
+      })
+
+      setReports(finalReports)
     } catch (err) {
-      console.error('[SIMULACIÓN ERROR] No se pudieron cargar reportes.')
+      console.error('[SYNC ERROR] No se pudieron cargar los reportes.')
     } finally {
       setLoading(false)
     }
@@ -138,14 +183,14 @@ export default function LogScreen() {
           fields: {
             folio: selectedReport.folio,
             contractId: selectedReport.contractid || selectedReport.contractId || '',
-            empresaName: '', // Not strictly needed for update
+            empresaName: '', 
             lat: 0, lng: 0, 
             largo: measures.largo,
             ancho: measures.ancho,
             profundidad: measures.profundidad,
             m2: measures.m2.toString(),
             locationDesc: selectedReport.locationdesc || selectedReport.locationDesc || '',
-            calle1: '', calle2: '', // Not needed for update
+            calle1: '', calle2: '',
             delegacion: selectedReport.delegacion,
             colonia: selectedReport.colonia,
             tipoBache: ''
@@ -153,11 +198,17 @@ export default function LogScreen() {
           photoBuffer,
           savedAt: new Date().toISOString()
         });
-        setShowSuccessModal(true)
-        setSelectedReport(null)
-        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 })
-      } catch (saveErr) {
-        setSyncStatus('FALLO CRÍTICO: NO SE PUDO GUARDAR NI ONLINE NI OFFLINE.')
+        
+        setSyncStatus('FOTO GUARDADA LOCALMENTE (MODO OFFLINE)');
+        setTimeout(() => {
+          setShowSuccessModal(true);
+          setSyncStatus(null);
+          fetchReports();
+          setSelectedReport(null);
+          setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
+        }, 1500);
+      } catch (dbErr) {
+        setSyncStatus('FALLO CRÍTICO: NO SE PUDO GUARDAR NI LOCALMENTE');
       }
     }
   }
@@ -267,8 +318,8 @@ export default function LogScreen() {
                         </div>
 
                         <div className="mt-4 flex gap-2 justify-center">
-                           <span className={`badge-depth ${parseFloat(measures.profundidad) > 0.05 ? 'deep' : 'shallow'}`}>
-                              {parseFloat(measures.profundidad) > 0.05 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'}
+                           <span className={`badge-depth ${parseFloat(measures.profundidad) > 0.07 ? 'deep' : 'shallow'}`}>
+                              {parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL'}
                            </span>
                         </div>
                      </div>
@@ -350,11 +401,14 @@ export default function LogScreen() {
           {reports
             .filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter)
             .map((report) => (
-            <div key={report.id} className="report-card" onClick={() => setSelectedReport(report)}>
+            <div key={report.folio} className="report-card" onClick={() => setSelectedReport(report)}>
                <div className="card-top">
-                  <span className="folio-tag">{report.folio}</span>
-                  <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')}`}>
-                    {report.status}
+                  <span className="folio-tag">
+                     {report.isOffline && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                     {report.folio}
+                  </span>
+                  <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')} ${report.isOffline ? 'offline-tint' : ''}`}>
+                    {report.isOffline ? 'PENDIENTE' : report.status}
                   </span>
                </div>
                <div className="card-body">

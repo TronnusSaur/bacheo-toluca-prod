@@ -79,6 +79,12 @@
 .status-detected { background: #ef4444; }
 .status-process { background: #f59e0b; }
 .status-finished { background: #10b981; }
+.status-offline { background: #64748b; }
+
+.offline-tint {
+  background: #0ea5e9 !important; /* Cyan bright to show it's active locally but pending */
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.3);
+}
 
 .card-body {
   border-top: 1px solid #f1f5f9;
