@@ -1,28 +1,43 @@
 import { useState, useEffect } from 'react'
-import { LayoutGrid, Plus, LayoutList, Map as MapIcon, WifiOff } from 'lucide-react'
+import { LayoutGrid, Plus, LayoutList, Map as MapIcon, WifiOff, LogOut } from 'lucide-react'
 import { registerAutoSync } from './lib/syncService'
 import { countPendingReports } from './lib/offlineStore'
+import { onAuthChange, signOut } from './lib/firebase'
+import type { User } from 'firebase/auth'
 import MetricsScreen from './screens/MetricsScreen'
 import FormScreen from './screens/FormScreen'
 import LogScreen from './screens/LogScreen'
 import MapScreen from './screens/MapScreen'
+import LoginScreen from './screens/LoginScreen'
 
 type Tab = 'MAPA' | 'NUEVO' | 'BITACORA' | 'METRICAS'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('METRICAS')
   const [pendingCount, setPendingCount] = useState(0)
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
+  // Listen to Firebase auth state (auto-restores from cache, works offline)
   useEffect(() => {
+    const unsubscribe = onAuthChange((firebaseUser) => {
+      setUser(firebaseUser)
+      setAuthLoading(false)
+    })
+    return () => unsubscribe()
+  }, [])
+
+  // Initialize sync & pending count only when authenticated
+  useEffect(() => {
+    if (!user) return
+
     async function initApp() {
       try {
-        // Lanza la sincronización automática al iniciar la app
         registerAutoSync(({ synced }) => {
           if (synced > 0) {
             countPendingReports().then(setPendingCount).catch(() => {});
           }
         });
-        // Muestra conteo inicial de pendientes
         const count = await countPendingReports();
         setPendingCount(count);
       } catch (e) {
@@ -31,7 +46,41 @@ export default function App() {
     }
     
     initApp();
-  }, []);
+  }, [user]);
+
+  const handleSignOut = async () => {
+    try {
+      await signOut()
+    } catch (err) {
+      console.error('[LOGOUT ERROR]', err)
+    }
+  }
+
+  // Show loading spinner while Firebase checks cached session
+  if (authLoading) {
+    return (
+      <div style={{ 
+        minHeight: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        background: '#0f172a',
+        color: '#64748b',
+        fontFamily: 'var(--font-family)',
+        fontSize: '0.7rem',
+        fontWeight: 900,
+        letterSpacing: '0.2em',
+        textTransform: 'uppercase'
+      }}>
+        CARGANDO SISTEMA...
+      </div>
+    )
+  }
+
+  // Show login screen if not authenticated
+  if (!user) {
+    return <LoginScreen onLoginSuccess={() => {}} />
+  }
 
   return (
     <div className="app-container">
@@ -49,6 +98,24 @@ export default function App() {
               <span className="status-dot"></span>
               {pendingCount > 0 ? 'Pendientes' : 'En Línea'}
             </div>
+            <button 
+              onClick={handleSignOut} 
+              title="Cerrar Sesión"
+              style={{
+                background: 'none',
+                border: '1px solid #f1f5f9',
+                borderRadius: '999px',
+                padding: '0.35rem',
+                cursor: 'pointer',
+                color: '#94a3b8',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'color 0.2s'
+              }}
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         </div>
         <nav className="header-nav">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { LayoutDashboard } from 'lucide-react'
+import { apiFetch } from '../lib/apiFetch'
 import './MetricsScreen.css'
 
 export default function MetricsScreen() {
@@ -13,7 +14,7 @@ export default function MetricsScreen() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('/api/reports')
+      const response = await apiFetch('/api/reports')
       const data = await response.json()
       
       if (Array.isArray(data)) {

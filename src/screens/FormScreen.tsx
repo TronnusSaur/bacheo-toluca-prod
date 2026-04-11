@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
 import { savePendingReport, countPendingReports } from '../lib/offlineStore'
 import { compressImage } from '../lib/imageUtils'
+import { apiFetch } from '../lib/apiFetch'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
 
@@ -152,7 +153,7 @@ export default function FormScreen() {
     }
 
     try {
-      const response = await fetch('/api/reports', {
+      const response = await apiFetch('/api/reports', {
         method: 'POST',
         body: submission
       })

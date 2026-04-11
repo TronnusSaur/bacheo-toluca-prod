@@ -11,6 +11,8 @@ import {
   clearPendingReport,
   PendingReport,
 } from './offlineStore';
+import { getIdToken } from './firebase';
+import { apiFetch } from './apiFetch';
 
 /** Convierte un ArrayBuffer de vuelta a un Blob (para el FormData) */
 function bufferToBlob(buffer: ArrayBuffer, type = 'image/jpeg'): Blob {
@@ -69,6 +71,13 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
     return;
   }
 
+  // Check for auth token before attempting sync
+  const token = await getIdToken();
+  if (!token) {
+    console.log('[SYNC] Sin sesión activa, posponiendo sincronización.');
+    return;
+  }
+
   const pending = await getPendingReports();
   if (pending.length === 0) return;
 
@@ -97,13 +106,13 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
             fd.append('tipoBache', report.fields.tipoBache);
           }
         }
-        response = await fetch(`/api/reports/${report.fields.folio}/photo`, { 
+        response = await apiFetch(`/api/reports/${report.fields.folio}/photo`, { 
           method: 'POST', 
           body: fd 
         });
       } else {
         const fd = buildFormData(report);
-        response = await fetch('/api/reports', { method: 'POST', body: fd });
+        response = await apiFetch('/api/reports', { method: 'POST', body: fd });
       }
 
       if (response.ok || response.status === 409) {

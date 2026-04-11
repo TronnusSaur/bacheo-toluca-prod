@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { MapContainer, TileLayer, GeoJSON, useMap, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { apiFetch } from '../lib/apiFetch'
 import './MapScreen.css'
 import { Filter, Layers, ListFilter, MapPin, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -46,7 +47,7 @@ export default function MapScreen() {
   useEffect(() => {
     fetch('/api/geojson/delegations').then(res => res.json()).then(data => { setDelegations(data); setLoading(false); }).catch(() => setLoading(false))
     fetch('/api/geojson').then(res => res.json()).then(data => setUtbs(data))
-    fetch('/api/reports').then(res => res.json()).then(data => setReports(data))
+    apiFetch('/api/reports').then(res => res.json()).then(data => setReports(data))
   }, [])
 
   const delegationStyle = { fillColor: '#00b8a3', weight: 2, opacity: 1, color: '#0f172a', fillOpacity: 0.05 };

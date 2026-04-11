@@ -11,6 +11,7 @@ import pool, { initDb, saveTokens } from './lib/db.js';
 import { getAuthUrl, getTokensFromCode, setClientTokens } from './lib/auth.js';
 import { uploadFile, getOrCreateFolder } from './lib/drive.js';
 import { appendReportToSheet, updateReportInSheet } from './lib/sheets.js';
+import { requireAuth } from './lib/firebaseAdmin.js';
 
 const app = express();
 const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
@@ -184,8 +185,8 @@ app.get('/api/geojson/delegations', (req, res) => {
   }
 });
 
-// --- REPORTS API ---
-app.get('/api/reports', async (req, res) => {
+// --- REPORTS API (PROTECTED) ---
+app.get('/api/reports', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM reports ORDER BY created_at DESC');
     res.json(rows);
@@ -194,7 +195,7 @@ app.get('/api/reports', async (req, res) => {
   }
 });
 
-app.post('/api/reports', upload.single('photo'), async (req, res) => {
+app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) => {
   try {
     const { 
       folio: manualFolio, contractId, empresaName, lat, lng, 
@@ -339,7 +340,7 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
 });
 
 // Photo Update (Caja/Final)
-app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) => {
+app.post('/api/reports/:folio/photo', requireAuth, upload.single('photo'), async (req, res) => {
   const { folio } = req.params;
   const { phase } = req.body; // 'caja' o 'terminado'
 
@@ -429,7 +430,7 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
 });
 
 // Update Status
-app.patch('/api/reports/:folio/status', async (req, res) => {
+app.patch('/api/reports/:folio/status', requireAuth, async (req, res) => {
   const { folio } = req.params;
   const { status } = req.body;
 

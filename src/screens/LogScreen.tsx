@@ -3,6 +3,7 @@ import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronL
 import SuccessModal from '../components/SuccessModal'
 import { savePendingReport, getPendingReports } from '../lib/offlineStore'
 import { compressImage } from '../lib/imageUtils'
+import { apiFetch } from '../lib/apiFetch'
 import './LogScreen.css'
 
 interface Report {
@@ -39,7 +40,7 @@ export default function LogScreen() {
       // 1. Cargar reportes del servidor
       let apiReports: Report[] = []
       try {
-        const response = await fetch('/api/reports')
+        const response = await apiFetch('/api/reports')
         apiReports = await response.json()
       } catch (e) {
         console.warn('[OFFLINE] No se pudo conectar al servidor, usando solo datos locales.')
@@ -141,7 +142,7 @@ export default function LogScreen() {
         formData.append('tipoBache', calculatedTipo)
       }
 
-      const res = await fetch(`/api/reports/${selectedReport.folio}/photo`, {
+      const res = await apiFetch(`/api/reports/${selectedReport.folio}/photo`, {
         method: 'POST',
         body: formData
       })
@@ -212,7 +213,7 @@ export default function LogScreen() {
     
     setSyncStatus('ACTUALIZANDO...')
     try {
-      const res = await fetch(`/api/reports/${selectedReport.folio}/status`, {
+      const res = await apiFetch(`/api/reports/${selectedReport.folio}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus })
