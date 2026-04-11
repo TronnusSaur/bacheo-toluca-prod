@@ -1,7 +1,28 @@
+# Dependencies
 node_modules
+frontend/node_modules
+
+# Environment & Secrets — NEVER commit these
 .env
+*.env
+.env.*
+backend/.env
 google_tokens.json
+backend/google_tokens.json
+
+# Build artifacts
 dist
 .vercel
+
+# Logs
 *.log
+
+# Temp files
 tmp
+uploads/
+/tmp/
+
+# Simulation data (not for production)
+simulation_reports.json
+OUTPUTS SUBIDA DATOS/
+scratch/

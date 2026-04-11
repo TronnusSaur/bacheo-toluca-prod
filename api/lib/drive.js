@@ -2,6 +2,11 @@ import { google } from 'googleapis';
 import { Readable } from 'stream';
 import { getGoogleClient } from './googleClient.js';
 
+/** Escape single quotes for Google Drive API query strings */
+function escapeQuery(str) {
+  return String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function logAudit(msg, data = null) {
   const timestamp = new Date().toISOString();
   let line = `[${timestamp}][DRIVE-AUDIT] ${msg}`;
@@ -14,7 +19,7 @@ export async function getOrCreateFolder(folderName, parentId) {
     const auth = await getGoogleClient();
     const drive = google.drive({ version: 'v3', auth });
 
-    const query = `name = '${folderName}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const query = `name = '${escapeQuery(folderName)}' and '${escapeQuery(parentId)}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const response = await drive.files.list({ 
       q: query,
       fields: 'files(id, name)',
@@ -48,7 +53,7 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
     const drive = google.drive({ version: 'v3', auth });
 
     // 1. Search for existing file to avoid duplicates
-    const query = `name = '${fileName}' and '${parentId}' in parents and trashed = false`;
+    const query = `name = '${escapeQuery(fileName)}' and '${escapeQuery(parentId)}' in parents and trashed = false`;
     const checkRes = await drive.files.list({
       q: query,
       fields: 'files(id)',

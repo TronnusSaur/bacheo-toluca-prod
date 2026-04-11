@@ -18,6 +18,28 @@ const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
 app.use(cors());
 app.use(express.json());
 
+// --- VALIDATION HELPERS ---
+const VALID_STATUSES = ['DETECTADO', 'EN PROCESO', 'TERMINADO'];
+const FOLIO_REGEX = /^\d{6}$/;
+const MAX_STRING_LEN = 500;
+
+function sanitizeString(val, maxLen = MAX_STRING_LEN) {
+  if (typeof val !== 'string') return String(val || '');
+  return val.trim().slice(0, maxLen);
+}
+
+function isValidCoord(val) {
+  const n = parseFloat(val);
+  return !isNaN(n) && isFinite(n);
+}
+
+/** Safely remove multer temp file */
+function cleanupTempFile(file) {
+  if (file?.path) {
+    try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
+  }
+}
+
 // --- INICIALIZACIÓN DB (Middleware para asegurar que las tablas existan) ---
 app.use(async (req, res, next) => {
   try {
@@ -180,7 +202,30 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
       calle1, calle2 
     } = req.body;
 
+    // --- INPUT VALIDATION ---
+    if (!contractId || !empresaName) {
+      cleanupTempFile(req.file);
+      return res.status(400).json({ error: 'contractId y empresaName son requeridos' });
+    }
+    if (lat && !isValidCoord(lat)) {
+      cleanupTempFile(req.file);
+      return res.status(400).json({ error: 'Latitud inválida' });
+    }
+    if (lng && !isValidCoord(lng)) {
+      cleanupTempFile(req.file);
+      return res.status(400).json({ error: 'Longitud inválida' });
+    }
+
     let folio = manualFolio;
+    
+    // --- FOLIO VALIDATION ---
+    if (folio && folio !== 'undefined') {
+      folio = sanitizeString(folio, 10);
+      if (!FOLIO_REGEX.test(folio)) {
+        cleanupTempFile(req.file);
+        return res.status(400).json({ error: `Folio inválido: "${folio}". Debe ser exactamente 6 dígitos (ej: 470001)` });
+      }
+    }
     
     // --- FOLIO GENERATION (CCFFFF) ---
     if (!folio || folio === 'undefined') {
@@ -206,11 +251,21 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
       return res.status(409).json({ error: `El folio ${folio} ya existe en la base de datos. Usa un número diferente.` });
     }
 
+    // Sanitize string fields
+    const safeLocationDesc = sanitizeString(locationDesc);
+    const safeDelegacion = sanitizeString(delegacion, 100);
+    const safeColonia = sanitizeString(colonia, 100);
+    const safeTipoBache = sanitizeString(tipoBache, 50);
+    const safeCalle1 = sanitizeString(calle1, 200);
+    const safeCalle2 = sanitizeString(calle2, 200);
+    const safeEmpresaName = sanitizeString(empresaName, 200);
+    const safeContractId = sanitizeString(contractId, 50);
+
     // 1. Initial Insert into Postgres
     const result = await pool.query(
       `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO') RETURNING *`,
-      [folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle1, calle2]
+      [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2]
     );
 
     const newReport = result.rows[0];
@@ -278,6 +333,8 @@ app.post('/api/reports', upload.single('photo'), async (req, res) => {
   } catch (err) {
     console.error('[REPORTS POST ERROR]', err);
     res.status(500).json({ error: 'Fallo al procesar bache', detail: err.message });
+  } finally {
+    cleanupTempFile(req.file);
   }
 });
 
@@ -341,7 +398,7 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
           [driveLink, nextStatus, largo, ancho, profundidad, m2, tipoBache, folio]
         );
         
-        await updateReportInSheet(process.env.sheet_id || process.env.SHEET_ID, folio, { 
+        await updateReportInSheet(process.env.SHEET_ID, folio, { 
           photocaja: driveLink, 
           status: nextStatus,
           largo, ancho, profundidad, m2,
@@ -353,7 +410,7 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
           [driveLink, nextStatus, folio]
         );
         
-        await updateReportInSheet(process.env.sheet_id || process.env.SHEET_ID, folio, { 
+        await updateReportInSheet(process.env.SHEET_ID, folio, { 
           photofinal: driveLink, 
           status: nextStatus 
         });
@@ -366,6 +423,8 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
   } catch (err) {
     console.error('[PHOTO UPDATE ERROR]', err);
     res.status(500).json({ error: 'Error al subir foto secundaria: ' + err.message });
+  } finally {
+    cleanupTempFile(req.file);
   }
 });
 
@@ -373,6 +432,14 @@ app.post('/api/reports/:folio/photo', upload.single('photo'), async (req, res) =
 app.patch('/api/reports/:folio/status', async (req, res) => {
   const { folio } = req.params;
   const { status } = req.body;
+
+  // C-6: Validate status against whitelist
+  if (!status || !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ 
+      error: `Estatus inválido: "${status}". Valores permitidos: ${VALID_STATUSES.join(', ')}` 
+    });
+  }
+
   try {
     await pool.query('UPDATE reports SET status = $1 WHERE folio = $2', [status, folio]);
     if (process.env.SHEET_ID) {
@@ -381,6 +448,9 @@ app.patch('/api/reports/:folio/status', async (req, res) => {
     
     // Return the updated report
     const { rows } = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: `Folio ${folio} no encontrado` });
+    }
     res.json(rows[0]);
   } catch (err) {
     console.error('[STATUS PATCH ERROR]', err);
