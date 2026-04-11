@@ -70,10 +70,9 @@ export async function initDb() {
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_1 TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_2 TEXT;");
 
-    // DATA FIX: Resynchronize status for reports stuck due to the previous bug
-    console.log('[DB] Ejecutando sincronización de estatus...');
-    await client.query("UPDATE reports SET status = 'EN PROCESO' WHERE status = 'DETECTADO' AND photoCaja IS NOT NULL;");
-    await client.query("UPDATE reports SET status = 'TERMINADO' WHERE status = 'EN PROCESO' AND photoFinal IS NOT NULL;");
+    // NOTE: Previous auto-fix queries removed (H-7).
+    // Status transitions are now handled ONLY through explicit API calls.
+    // If manual status correction is needed, run a migration script separately.
 
     dbInitialized = true;
     console.log('[DB] Base de datos inicializada correctamente.');

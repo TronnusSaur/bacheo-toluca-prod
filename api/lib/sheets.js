@@ -58,7 +58,7 @@ export async function appendReportToSheet(sheetId, report) {
 
     const res = await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: 'Hoja 1!A:O',
+      range: 'Hoja 1!A:S',
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [rowValues] },

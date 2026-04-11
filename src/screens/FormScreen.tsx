@@ -138,18 +138,11 @@ export default function FormScreen() {
     submission.append('tipoBache', formData.tipoBache);
 
     const photoFile = fileInputRef.current?.files?.[0];
-    let photoToUpload: Blob | File | undefined = photoFile;
 
+    // H-1 FIX: No compression on client — server-side Sharp handles it
+    // Double compression (client + server) was degrading quality without benefit
     if (photoFile) {
-      try {
-        photoToUpload = await compressImage(photoFile);
-      } catch (err) {
-        console.warn('[COMPRESS] Falló compresión, usando original:', err);
-      }
-    }
-
-    if (photoToUpload) {
-      submission.append('photo', photoToUpload, 'inicial.jpg');
+      submission.append('photo', photoFile, 'inicial.jpg');
     }
 
     try {
@@ -371,7 +364,7 @@ export default function FormScreen() {
           <button 
             type="submit" 
             className="btn-submit" 
-            disabled={!hasPhoto || !formData.lat || !selectedContract || folioSuffix.length !== 4}
+            disabled={isUploading || !hasPhoto || !formData.lat || !selectedContract || folioSuffix.length !== 4}
             style={{ 
               opacity: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 1 : 0.5,
               cursor: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 'pointer' : 'not-allowed'
