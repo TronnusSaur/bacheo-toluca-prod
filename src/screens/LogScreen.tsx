@@ -337,7 +337,23 @@ export default function LogScreen() {
                   )}
                   
                   {syncStatus && (
-                     <div className={`p-4 rounded-2xl text-center text-[8px] font-black uppercase tracking-widest border transition-all ${syncStatus.includes('FALLO') || syncStatus.includes('ERROR') ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+                     <div 
+                       style={{
+                         padding: '1rem',
+                         borderRadius: '1rem',
+                         textAlign: 'center',
+                         fontSize: '8px',
+                         fontWeight: 900,
+                         textTransform: 'uppercase',
+                         letterSpacing: '0.1em',
+                         border: '1px solid',
+                         transition: 'all 0.3s',
+                         ...(syncStatus.includes('FALLO') || syncStatus.includes('ERROR')
+                           ? { background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.2)', color: '#ef4444' }
+                           : { background: 'rgba(6,182,212,0.1)', borderColor: 'rgba(6,182,212,0.2)', color: '#22d3ee' }
+                         )
+                       }}
+                     >
                       {syncStatus}
                     </div>
                   )}

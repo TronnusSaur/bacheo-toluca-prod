@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
 import { savePendingReport, countPendingReports } from '../lib/offlineStore'
-import { compressImage } from '../lib/imageUtils'
 import { apiFetch } from '../lib/apiFetch'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
@@ -29,7 +28,7 @@ export default function FormScreen() {
     colonia: '---',
     lat: 0,
     lng: 0,
-    tipoBache: 'SUPERFICIAL'
+    tipoBache: ''  // H-5: determined only during caja phase with measurements
   })
   
   const [isUploading, setIsUploading] = useState(false)
@@ -135,7 +134,10 @@ export default function FormScreen() {
     submission.append('calle2', formData.calle2);
     submission.append('delegacion', formData.delegacion);
     submission.append('colonia', formData.colonia);
-    submission.append('tipoBache', formData.tipoBache);
+    // H-5: Only send tipoBache if explicitly set (caja phase determines it)
+    if (formData.tipoBache) {
+      submission.append('tipoBache', formData.tipoBache);
+    }
 
     const photoFile = fileInputRef.current?.files?.[0];
 
