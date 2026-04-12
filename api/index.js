@@ -569,18 +569,16 @@ app.get('/api/maintenance/provision-users', async (req, res) => {
         supervisorsMap.get(sKey).contracts.push(contractId);
       }
 
-      // First 3 residents only
-      if (residentsList.length < 3) {
-        const rKey = normalizeName(residentName);
-        if (!residentsList.find(r => r.email.startsWith(rKey))) {
-          residentsList.push({
-            fullName: residentName,
-            email: `${rKey}-bacheo@gob.mx`,
-            role: 'RESIDENTE',
-            contracts: [contractId],
-            password: `CONTRATO${contractNum}`
-          });
-        }
+      // All residents (no limit)
+      const rKey = normalizeName(residentName);
+      if (!residentsList.find(r => r.email.startsWith(rKey))) {
+        residentsList.push({
+          fullName: residentName,
+          email: `${rKey}-bacheo@gob.mx`,
+          role: 'RESIDENTE',
+          contracts: [contractId],
+          password: `CONTRATO${contractNum}`
+        });
       }
     });
 
@@ -595,8 +593,14 @@ app.get('/api/maintenance/provision-users', async (req, res) => {
     }
     const adminAuth = getAdminAuth(adminApp);
 
+    // --- Hardcoded Admins ---
+    const adminUsers = [
+      { fullName: 'Juan Pablo Admin', email: 'juanpablobumblebee@gmail.com', role: 'ADMIN', contracts: [], password: null },
+      { fullName: 'Sorano Admin DGOP', email: 'soranoautodgop@gmail.com',    role: 'ADMIN', contracts: [], password: null },
+    ];
+
     // --- Process all users ---
-    const allUsers = [...supervisorsMap.values(), ...residentsList];
+    const allUsers = [...supervisorsMap.values(), ...residentsList, ...adminUsers];
 
     for (const user of allUsers) {
       try {
@@ -604,7 +608,9 @@ app.get('/api/maintenance/provision-users', async (req, res) => {
         let fbUser;
         try {
           fbUser = await adminAuth.getUserByEmail(user.email);
-          await adminAuth.updateUser(fbUser.uid, { password: user.password, displayName: user.fullName });
+          const updatePayload = { displayName: user.fullName };
+          if (user.password) updatePayload.password = user.password; // Skip for admins
+          await adminAuth.updateUser(fbUser.uid, updatePayload);
           results.updated.push(user.email);
         } catch (e) {
           if (e.code === 'auth/user-not-found') {
