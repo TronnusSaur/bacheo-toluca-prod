@@ -527,6 +527,9 @@ app.get('/api/maintenance/provision-users', async (req, res) => {
   const results = { created: [], updated: [], errors: [] };
 
   try {
+    // Ensure tables exist before any DB operations
+    await initDb();
+
     // --- Helper: Normalize first name ---
     function normalizeName(fullName) {
       return fullName.split(' ')[0]
