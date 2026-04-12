@@ -61,13 +61,21 @@ function hasGoodConnection(): boolean {
 
 type SyncCallback = (result: { synced: number; failed: number }) => void;
 
+let isSyncing = false;
+
 /**
  * Sube todos los reportes pendientes de IndexedDB al servidor.
  * @param onComplete - Callback informado al terminar con el conteo de éxitos/fallos.
  */
 export async function syncPendingReports(onComplete?: SyncCallback): Promise<void> {
+  if (isSyncing) {
+    console.log('[SYNC] Ya hay una sincronización en curso. Ignorando solicitud concurrente.');
+    return;
+  }
+  isSyncing = true;
   if (!hasGoodConnection()) {
     console.log('[SYNC] Conexión insuficiente, posponiendo sincronización.');
+    isSyncing = false;
     return;
   }
 
@@ -75,6 +83,7 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
   const token = await getIdToken();
   if (!token) {
     console.log('[SYNC] Sin sesión activa, posponiendo sincronización.');
+    isSyncing = false;
     return;
   }
 
@@ -131,6 +140,7 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
   }
 
   console.log(`[SYNC] Completado. Sincronizados: ${synced}, Fallidos: ${failed}`);
+  isSyncing = false;
   onComplete?.({ synced, failed });
 }
 

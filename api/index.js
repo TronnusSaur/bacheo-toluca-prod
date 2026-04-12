@@ -351,7 +351,17 @@ app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) =
     if (process.env.SHEET_ID) {
       try {
         newReport.usuario = req.user.email; // Ensure Responsable (Col T) is populated
-        await appendReportToSheet(process.env.SHEET_ID, newReport);
+        const isRecovery = existing.rowCount > 0; // existing defined earlier in self-healing block
+        if (isRecovery) {
+          // Row already exists in Sheets from the first (failed) attempt — update it, don't duplicate
+          await updateReportInSheet(process.env.SHEET_ID, newReport.folio, {
+            photoUrl: newReport.photourl || newReport.photoUrl || '',
+            usuario: req.user.email,
+          });
+          console.log(`[SHEETS RECOVERY] Fila de folio ${newReport.folio} actualizada (no duplicada).`);
+        } else {
+          await appendReportToSheet(process.env.SHEET_ID, newReport);
+        }
         sheetsOk = true;
       } catch (err) {
         sheetsError = err.message;

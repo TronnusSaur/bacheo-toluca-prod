@@ -140,8 +140,16 @@ export default function FormScreen() {
       try {
         const compressed = await compressImage(photoFile);
         photoBuffer = await compressed.arrayBuffer();
+        console.log('[COMPRESS] Foto inicial comprimida OK:', photoBuffer.byteLength, 'bytes');
       } catch (compressErr) {
-        console.warn('[OFFLINE] No se pudo comprimir foto para offline:', compressErr);
+        console.warn('[COMPRESS] Falló la compresión (RAM bajo?). Usando buffer crudo como fallback:', compressErr);
+        // RESCUE: read the raw file bytes into memory so offline sync can still upload the photo
+        try {
+          photoBuffer = await photoFile.arrayBuffer();
+          console.log('[COMPRESS] Buffer crudo rescatado:', photoBuffer.byteLength, 'bytes');
+        } catch (rawErr) {
+          console.error('[COMPRESS] No se pudo leer ni el buffer crudo. La foto no se guardará offline.', rawErr);
+        }
       }
     }
 
