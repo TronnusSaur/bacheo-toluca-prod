@@ -515,61 +515,6 @@ app.patch('/api/reports/:folio/status', requireAuth, async (req, res) => {
 });
 
 
-// TEMP: One-time fix for collision residents
-app.get('/api/maintenance/provision-missing', async (req, res) => {
-  if ((req.query.secret || req.headers['x-maintenance-secret']) !== 'BACHEO2026') {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
-  const missingResidents = [
-    { fullName: 'JOSE MANUEL GONZALEZ GOMEZ',     email: 'manuel-bacheo@gob.mx',    contracts: ['Contrato 012'], password: 'CONTRATO012' },
-    { fullName: 'JORGE DE LA VEGA GONZALEZ',       email: 'jorge2-bacheo@gob.mx',    contracts: ['Contrato 021'], password: 'CONTRATO021' },
-    { fullName: 'LUIS DANIEL FLORES LOPEZ',        email: 'daniel-bacheo@gob.mx',    contracts: ['Contrato 022'], password: 'CONTRATO022' },
-    { fullName: 'LUIS EDUARDO URIBE VALLE',        email: 'eduardo2-bacheo@gob.mx',  contracts: ['Contrato 026'], password: 'CONTRATO026' },
-    { fullName: 'SERGIO VELAZQUEZ RENDON',         email: 'velazquez-bacheo@gob.mx', contracts: ['Contrato 030'], password: 'CONTRATO030' },
-    { fullName: 'SERGIO FRANCISCO BERNAL ESPINOSA',email: 'francisco-bacheo@gob.mx', contracts: ['Contrato 032'], password: 'CONTRATO032' },
-    { fullName: 'ALAN TELLEZ GONZALEZ',            email: 'alan2-bacheo@gob.mx',     contracts: ['Contrato 039'], password: 'CONTRATO039' },
-    { fullName: 'ALEXIS OLIVER JUAREZ LOPEZ',      email: 'oliver-bacheo@gob.mx',    contracts: ['Contrato 044'], password: 'CONTRATO044' },
-    { fullName: 'ALEXIS GONZALES FLORES',          email: 'alexis2-bacheo@gob.mx',   contracts: ['Contrato 045'], password: 'CONTRATO045' },
-    { fullName: 'LUIS FERNANDO AMARO MIRELES',     email: 'fernando-bacheo@gob.mx',  contracts: ['Contrato 046'], password: 'CONTRATO046' },
-  ];
-
-  const results = { created: [], updated: [], errors: [] };
-  try {
-    await initDb();
-    const credsJson = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_CREDENTIALS;
-    const creds = JSON.parse(credsJson);
-    const adminApp = getApps().length > 0 ? getApps()[0] : initializeApp({ credential: cert(creds) }, 'provision-missing');
-    const adminAuth = getAdminAuth(adminApp);
-
-    for (const user of missingResidents) {
-      try {
-        let fbUser;
-        try {
-          fbUser = await adminAuth.getUserByEmail(user.email);
-          await adminAuth.updateUser(fbUser.uid, { password: user.password, displayName: user.fullName });
-          results.updated.push(user.email);
-        } catch (e) {
-          if (e.code === 'auth/user-not-found') {
-            await adminAuth.createUser({ email: user.email, password: user.password, displayName: user.fullName });
-            results.created.push(user.email);
-          } else throw e;
-        }
-        await pool.query(
-          `INSERT INTO app_users (email, role, assigned_contracts)
-           VALUES ($1, 'RESIDENTE', $2)
-           ON CONFLICT (email) DO UPDATE SET role='RESIDENTE', assigned_contracts=EXCLUDED.assigned_contracts`,
-          [user.email, user.contracts]
-        );
-      } catch (err) {
-        results.errors.push({ email: user.email, error: err.message });
-      }
-    }
-    res.json({ success: true, summary: `Creados: ${results.created.length}, Actualizados: ${results.updated.length}, Errores: ${results.errors.length}`, ...results });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Export as Vercel Function
 export default app;
