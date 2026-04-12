@@ -132,6 +132,19 @@ export default function FormScreen() {
     const prefix = getContractPrefix(selectedContract.id);
     const folio = `${prefix}${folioSuffix}`;
 
+    // --- Capture photo ONCE here, before any network attempt ---
+    // This avoids stale fileInputRef after FormData consumes the file
+    const photoFile = fileInputRef.current?.files?.[0];
+    let photoBuffer: ArrayBuffer | null = null;
+    if (photoFile) {
+      try {
+        const compressed = await compressImage(photoFile);
+        photoBuffer = await compressed.arrayBuffer();
+      } catch (compressErr) {
+        console.warn('[OFFLINE] No se pudo comprimir foto para offline:', compressErr);
+      }
+    }
+
     const submission = new FormData();
     submission.append('folio', folio);
     submission.append('contractId', selectedContract.id);
@@ -144,15 +157,11 @@ export default function FormScreen() {
     submission.append('calle2', formData.calle2);
     submission.append('delegacion', formData.delegacion);
     submission.append('colonia', formData.colonia);
-    // H-5: Only send tipoBache if explicitly set (caja phase determines it)
     if (formData.tipoBache) {
       submission.append('tipoBache', formData.tipoBache);
     }
 
-    const photoFile = fileInputRef.current?.files?.[0];
-
-    // H-1 FIX: No compression on client — server-side Sharp handles it
-    // Double compression (client + server) was degrading quality without benefit
+    // For the online attempt, send the original (server does its own Sharp compression)
     if (photoFile) {
       submission.append('photo', photoFile, 'inicial.jpg');
     }
@@ -167,25 +176,17 @@ export default function FormScreen() {
         setShowSuccessModal(true)
         resetForm()
       } else {
-        await saveToOffline(folio)
+        await saveToOffline(folio, photoBuffer)
       }
     } catch (err) {
-      await saveToOffline(folio)
+      await saveToOffline(folio, photoBuffer)
     } finally {
       setIsUploading(false)
     }
   }
 
-  const saveToOffline = async (folio: string) => {
+  const saveToOffline = async (folio: string, photoBuffer: ArrayBuffer | null = null) => {
     try {
-      const photoFile = fileInputRef.current?.files?.[0]
-      let photoBuffer: ArrayBuffer | null = null;
-      
-      if (photoFile) {
-        const compressed = await compressImage(photoFile);
-        photoBuffer = await compressed.arrayBuffer();
-      }
-
       await savePendingReport({
         type: 'APERTURA',
         phase: 'inicial',
@@ -213,7 +214,7 @@ export default function FormScreen() {
       updateOfflineCount();
     } catch (e) {
       console.error('[OFFLINE ERROR] No se pudo guardar ni localmente:', e);
-      alert('Error crítico: no se pudo guardar el reporte ni siquiera en modo offline. Revise espacio en disco.');
+      alert('Error crítico: no se pudo guardar el reporte. Revise espacio en disco.');
     }
   }
 
