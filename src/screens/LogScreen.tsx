@@ -96,9 +96,9 @@ export default function LogScreen() {
 
   const fetchContracts = async () => {
     try {
-      const response = await fetch('/api/catalogs/contracts')
+      const response = await apiFetch('/api/catalogs/contracts')
       const data = await response.json()
-      setContracts(data)
+      setContracts(Array.isArray(data) ? data : [])
     } catch (err) {
       console.error('[API ERROR] No se pudo cargar el catálogo de contratos.')
     }

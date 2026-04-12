@@ -24,6 +24,11 @@ export async function apiFetch(
     headers.set('Authorization', `Bearer ${token}`);
   }
   
+  // Auto-add Content-Type for JSON string bodies if not explicitly set
+  if (typeof options.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  
   return fetch(url, {
     ...options,
     headers,
