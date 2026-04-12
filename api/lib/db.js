@@ -17,7 +17,7 @@ let dbInitialized = false;
  * Initialize Tables (Equivalent to schema.sql)
  */
 export async function initDb() {
-  // Always run - ensures new tables (like app_users) are created on every cold start
+  if (dbInitialized) return; // Skip re-runs in the same hot instance
   
   const client = await pool.connect();
   try {
