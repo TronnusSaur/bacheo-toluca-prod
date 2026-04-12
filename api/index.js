@@ -11,7 +11,9 @@ import pool, { initDb, saveTokens } from './lib/db.js';
 import { getAuthUrl, getTokensFromCode, setClientTokens } from './lib/auth.js';
 import { uploadFile, getOrCreateFolder } from './lib/drive.js';
 import { appendReportToSheet, updateReportInSheet } from './lib/sheets.js';
-import { requireAuth } from './lib/firebaseAdmin.js';
+import { requireAuth, verifyFirebaseToken } from './lib/firebaseAdmin.js';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 
 const app = express();
 const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
@@ -101,18 +103,18 @@ app.get('/api/auth/callback', async (req, res) => {
 });
 
 // --- CATALOG DATA (DYNAMIC) ---
-app.get('/api/catalogs/contracts', (req, res) => {
+app.get('/api/catalogs/contracts', requireAuth, (req, res) => {
   const CONTRACTS_FILE = path.join(process.cwd(), 'CATALOGOS', 'RESUMEN DE CONTRATOS - SUPERVISORES 2026 - Registros Contratos Reales.csv');
   
   if (!fs.existsSync(CONTRACTS_FILE)) {
-    return res.status(404).json({ error: 'Catálogo de contratos no encontrado en ' + CONTRACTS_FILE });
+    return res.status(404).json({ error: 'Catálogo de contratos no encontrado' });
   }
 
   try {
     const content = fs.readFileSync(CONTRACTS_FILE, 'utf8');
     const lines = content.split('\n').filter(l => l.trim() !== '');
     
-    const contracts = lines.slice(1).map((line, idx) => {
+    let contracts = lines.slice(1).map((line) => {
       const row = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(item => item.trim().replace(/^"|"$/g, ''));
       if (row.length < 10) return null;
       return {
@@ -127,14 +129,21 @@ app.get('/api/catalogs/contracts', (req, res) => {
       };
     }).filter(c => c && c.id && c.id !== '#REF!');
 
+    // RBAC: Filter contracts if not ADMIN
+    if (req.user.role !== 'ADMIN') {
+      const allowed = req.user.assignments || [];
+      contracts = contracts.filter(c => allowed.includes(c.id));
+    }
+
     res.json(contracts);
   } catch (err) {
+    console.error('[CATALOG ERROR]', err);
     res.status(500).json({ error: 'Error al procesar catálogo' });
   }
 });
 
 // --- RADAR API ---
-app.post('/api/radar', (req, res) => {
+app.post('/api/radar', requireAuth, (req, res) => {
   const { lat, lng } = req.body;
   const data = loadGeoJSON();
   if (!data) return res.status(500).json({ error: 'Datos geográficos no disponibles en el servidor' });
@@ -188,9 +197,22 @@ app.get('/api/geojson/delegations', (req, res) => {
 // --- REPORTS API (PROTECTED) ---
 app.get('/api/reports', requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM reports ORDER BY created_at DESC');
+    let query = 'SELECT * FROM reports';
+    let params = [];
+
+    // RBAC: Filter by contract assignment if not ADMIN
+    if (req.user.role !== 'ADMIN') {
+      const allowed = req.user.assignments || [];
+      if (allowed.length === 0) return res.json([]); // No assignments = no data
+      query += ' WHERE contractId = ANY($1)';
+      params.push(allowed);
+    }
+
+    query += ' ORDER BY created_at DESC';
+    const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
+    console.error('[REPORTS GET ERROR]', err);
     res.status(500).json({ error: 'Error al leer baches' });
   }
 });
@@ -202,6 +224,15 @@ app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) =
       locationDesc, delegacion, colonia, tipoBache, 
       calle1, calle2 
     } = req.body;
+
+    // --- RBAC VALIDATION ---
+    if (req.user.role !== 'ADMIN') {
+      const allowed = req.user.assignments || [];
+      if (!allowed.includes(contractId)) {
+        cleanupTempFile(req.file);
+        return res.status(403).json({ error: 'No tienes permiso para reportar en este contrato' });
+      }
+    }
 
     // --- INPUT VALIDATION ---
     if (!contractId || !empresaName) {
@@ -264,9 +295,9 @@ app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) =
 
     // 1. Initial Insert into Postgres
     const result = await pool.query(
-      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO') RETURNING *`,
-      [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2]
+      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO', $12) RETURNING *`,
+      [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, req.user.email]
     );
 
     const newReport = result.rows[0];
@@ -354,6 +385,16 @@ app.post('/api/reports/:folio/photo', requireAuth, upload.single('photo'), async
     if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
     const report = reportRes.rows[0];
 
+    // RBAC: Verify ownership
+    if (req.user.role !== 'ADMIN') {
+      const allowed = req.user.assignments || [];
+      const reportCid = report.contractid || report.contractId;
+      if (!allowed.includes(reportCid)) {
+        cleanupTempFile(req.file);
+        return res.status(403).json({ error: 'No tienes permiso para actualizar este reporte' });
+      }
+    }
+
     // PHASE VALIDATION (ROBUSTNESS)
     // If we receive 'caja' but it's already 'EN PROCESO' or 'TERMINADO', it's likely a late retry or error.
     const currentStatus = report.status;
@@ -395,25 +436,27 @@ app.post('/api/reports/:folio/photo', requireAuth, upload.single('photo'), async
       if (phase === 'caja') {
         const { largo, ancho, profundidad, m2, tipoBache } = req.body;
         await pool.query(
-          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6, tipobache = $7 WHERE folio = $8`, 
-          [driveLink, nextStatus, largo, ancho, profundidad, m2, tipoBache, folio]
+          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6, tipobache = $7, updated_by = $8 WHERE folio = $9`, 
+          [driveLink, nextStatus, largo, ancho, profundidad, m2, tipoBache, req.user.email, folio]
         );
         
         await updateReportInSheet(process.env.SHEET_ID, folio, { 
           photocaja: driveLink, 
           status: nextStatus,
           largo, ancho, profundidad, m2,
-          tipobache: tipoBache
+          tipobache: tipoBache,
+          usuario: req.user.email // Record responsible user in Sheets
         });
       } else {
         await pool.query(
-          `UPDATE reports SET ${colName} = $1, status = $2 WHERE folio = $3`, 
-          [driveLink, nextStatus, folio]
+          `UPDATE reports SET ${colName} = $1, status = $2, updated_by = $3 WHERE folio = $4`, 
+          [driveLink, nextStatus, req.user.email, folio]
         );
         
         await updateReportInSheet(process.env.SHEET_ID, folio, { 
           photofinal: driveLink, 
-          status: nextStatus 
+          status: nextStatus,
+          usuario: req.user.email
         });
       }
 
@@ -442,9 +485,21 @@ app.patch('/api/reports/:folio/status', requireAuth, async (req, res) => {
   }
 
   try {
-    await pool.query('UPDATE reports SET status = $1 WHERE folio = $2', [status, folio]);
+    const reportRes = await pool.query('SELECT contractId FROM reports WHERE folio = $1', [folio]);
+    if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
+
+    // RBAC: Verify ownership
+    if (req.user.role !== 'ADMIN') {
+      const allowed = req.user.assignments || [];
+      const reportCid = reportRes.rows[0].contractid || reportRes.rows[0].contractId;
+      if (!allowed.includes(reportCid)) {
+        return res.status(403).json({ error: 'No tienes permiso para actualizar este reporte' });
+      }
+    }
+
+    await pool.query('UPDATE reports SET status = $1, updated_by = $2 WHERE folio = $3', [status, req.user.email, folio]);
     if (process.env.SHEET_ID) {
-      await updateReportInSheet(process.env.SHEET_ID, folio, { status });
+      await updateReportInSheet(process.env.SHEET_ID, folio, { status, usuario: req.user.email });
     }
     
     // Return the updated report
@@ -456,6 +511,133 @@ app.patch('/api/reports/:folio/status', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[STATUS PATCH ERROR]', err);
     res.status(500).json({ error: 'Fallo al actualizar estatus' });
+  }
+});
+
+// =========================================================
+// MAINTENANCE: PROVISION USERS (ONE-TIME USE)
+// =========================================================
+app.get('/api/maintenance/provision-users', async (req, res) => {
+  // Simple secret guard — prevents accidental public triggers
+  const secret = req.headers['x-maintenance-secret'] || req.query.secret;
+  if (secret !== 'BACHEO2026') {
+    return res.status(403).json({ error: 'Acceso denegado. Provee ?secret=BACHEO2026' });
+  }
+
+  const results = { created: [], updated: [], errors: [] };
+
+  try {
+    // --- Helper: Normalize first name ---
+    function normalizeName(fullName) {
+      return fullName.split(' ')[0]
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z]/g, "");
+    }
+
+    // --- Read CSV ---
+    const CSV_PATH = path.join(process.cwd(), 'CATALOGOS', 'RESUMEN DE CONTRATOS - SUPERVISORES 2026 - Registros Contratos Reales.csv');
+    const content = fs.readFileSync(CSV_PATH, 'utf8');
+    const lines = content.split('\n').filter(l => l.trim() !== '');
+    
+    const supervisorsMap = new Map();
+    const residentsList = [];
+
+    lines.slice(1).forEach((line) => {
+      const row = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(item => item.trim().replace(/^"|"$/g, ''));
+      if (row.length < 13) return;
+      const contractId = row[1];
+      const contractNum = (contractId.match(/\d+/)?.[0] || '000').padStart(3, '0');
+      const supervisorName = row[9];
+      const residentName = row[11];
+
+      // Supervisor aggregation (unique by first name)
+      const sKey = normalizeName(supervisorName);
+      if (!supervisorsMap.has(sKey)) {
+        supervisorsMap.set(sKey, {
+          fullName: supervisorName,
+          email: `${sKey}-bacheo@gob.mx`,
+          role: 'SUPERVISOR',
+          contracts: [contractId],
+          password: 'BacheoDGOP'
+        });
+      } else {
+        supervisorsMap.get(sKey).contracts.push(contractId);
+      }
+
+      // First 3 residents only
+      if (residentsList.length < 3) {
+        const rKey = normalizeName(residentName);
+        if (!residentsList.find(r => r.email.startsWith(rKey))) {
+          residentsList.push({
+            fullName: residentName,
+            email: `${rKey}-bacheo@gob.mx`,
+            role: 'RESIDENTE',
+            contracts: [contractId],
+            password: `CONTRATO${contractNum}`
+          });
+        }
+      }
+    });
+
+    // --- Get Firebase Admin Auth ---
+    const credsJson = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_CREDENTIALS;
+    const creds = JSON.parse(credsJson);
+    let adminApp;
+    if (getApps().length > 0) {
+      adminApp = getApps()[0];
+    } else {
+      adminApp = initializeApp({ credential: cert(creds) }, 'provision');
+    }
+    const adminAuth = getAdminAuth(adminApp);
+
+    // --- Process all users ---
+    const allUsers = [...supervisorsMap.values(), ...residentsList];
+
+    for (const user of allUsers) {
+      try {
+        // 1. Create/Update in Firebase Auth
+        let fbUser;
+        try {
+          fbUser = await adminAuth.getUserByEmail(user.email);
+          await adminAuth.updateUser(fbUser.uid, { password: user.password, displayName: user.fullName });
+          results.updated.push(user.email);
+        } catch (e) {
+          if (e.code === 'auth/user-not-found') {
+            fbUser = await adminAuth.createUser({
+              email: user.email,
+              password: user.password,
+              displayName: user.fullName
+            });
+            results.created.push(user.email);
+          } else throw e;
+        }
+
+        // 2. Register/Update in Postgres
+        await pool.query(
+          `INSERT INTO app_users (email, role, assigned_contracts) 
+           VALUES ($1, $2, $3) 
+           ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, assigned_contracts = EXCLUDED.assigned_contracts`,
+          [user.email, user.role, user.contracts]
+        );
+
+      } catch (err) {
+        results.errors.push({ email: user.email, error: err.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      summary: `Creados: ${results.created.length}, Actualizados: ${results.updated.length}, Errores: ${results.errors.length}`,
+      created: results.created,
+      updated: results.updated,
+      errors: results.errors
+    });
+
+  } catch (err) {
+    console.error('[PROVISION ERROR]', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
