@@ -17,7 +17,7 @@ let dbInitialized = false;
  * Initialize Tables (Equivalent to schema.sql)
  */
 export async function initDb() {
-  if (dbInitialized) return;
+  // Always run - ensures new tables (like app_users) are created on every cold start
   
   const client = await pool.connect();
   try {
@@ -59,8 +59,27 @@ export async function initDb() {
         photoUrl TEXT,
         photoCaja TEXT,
         photoFinal TEXT,
+        created_by TEXT,
+        updated_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Table for Roles and Assignments
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_users (
+        email TEXT PRIMARY KEY,
+        role TEXT NOT NULL DEFAULT 'RESIDENTE',
+        assigned_contracts TEXT[] DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Seed initial admin user (adjust email as needed)
+    await client.query(`
+      INSERT INTO app_users (email, role) 
+      VALUES ('admin@bacheo.gob.mx', 'ADMIN')
+      ON CONFLICT (email) DO NOTHING;
     `);
 
     // Add columns if missing (Simple migration)
@@ -69,6 +88,8 @@ export async function initDb() {
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_1 TEXT;");
     await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS calle_2 TEXT;");
+    await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS created_by TEXT;");
+    await client.query("ALTER TABLE reports ADD COLUMN IF NOT EXISTS updated_by TEXT;");
 
     // NOTE: Previous auto-fix queries removed (H-7).
     // Status transitions are now handled ONLY through explicit API calls.
