@@ -343,6 +343,7 @@ app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) =
     // 3. Sheets Sync
     if (process.env.SHEET_ID) {
       try {
+        newReport.usuario = req.user.email; // Ensure Responsable (Col T) is populated
         await appendReportToSheet(process.env.SHEET_ID, newReport);
         sheetsOk = true;
       } catch (err) {

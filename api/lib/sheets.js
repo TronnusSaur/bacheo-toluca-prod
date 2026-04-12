@@ -13,7 +13,9 @@ function logSheets(msg, data = null) {
 /**
  * Maps the report object to the exact array structure required by the Google Sheet.
  * Column Order: Folio, Fecha, Contrato, Empresa, Ubicación (Ref), Delegación, Colonia, 
- * Coordenadas (Lat,Lng), Largo (M), Ancho (M), Profundidad (M), M2, Tipo Bache, Estatus, Foto Inicial (Link)
+ * Column Order: Folio, Fecha, Contrato, Empresa, Ubicación (Ref), Delegación, Colonia, 
+ * Coordenadas (Lat,Lng), Largo (M), Ancho (M), Profundidad (M), M2, Tipo Bache, Estatus, 
+ * Foto Inicial (Link), Photo Caja, Photo Final, Calle 1, Calle 2, Responsable (T)
  */
 function mapReportToRow(report) {
   const fecha = new Date().toLocaleString('es-MX', { 
@@ -21,6 +23,13 @@ function mapReportToRow(report) {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
+
+  // Strip 'CAJA ' prefix — only store SUPERFICIAL or PROFUNDO
+  const rawTipo = report.tipobache || report.tipoBache || '';
+  const tipoBache = rawTipo.replace(/^CAJA\s+/i, '').trim();
+
+  // Responsable: prefer explicit 'usuario' field, then updated_by (photo uploads), then created_by
+  const responsable = report.usuario || report.updated_by || report.created_by || '';
 
   return [
     report.folio || '',
@@ -35,13 +44,14 @@ function mapReportToRow(report) {
     report.ancho || '0',
     report.profundidad || '0',
     report.m2 || '0',
-    report.tipobache || report.tipoBache || '',
+    tipoBache,
     report.status || 'DETECTADO',
     report.photourl || report.photoUrl || '',
-    '', // Placeholder for Photo Caja
-    '', // Placeholder for Photo Final
-    report.calle_1 || report.calle1 || '', // New Calle 1
-    report.calle_2 || report.calle2 || ''  // New Calle 2
+    report.photocaja || report.photoCaja || '', 
+    report.photofinal || report.photoFinal || '',
+    report.calle_1 || report.calle1 || '', 
+    report.calle_2 || report.calle2 || '',
+    responsable // Column T
   ];
 }
 
@@ -58,7 +68,7 @@ export async function appendReportToSheet(sheetId, report) {
 
     const res = await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: 'Hoja 1!A:S',
+      range: 'Hoja 1!A:T',
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [rowValues] },
@@ -88,73 +98,56 @@ export async function updateReportInSheet(sheetId, folio, updates) {
 
     const rows = readRes.data.values || [];
     
-    // Normalize folio for lookup (remove leading zeros and spaces)
+    // Normalize folio for lookup
     const normalize = (f) => String(f || '').trim().replace(/^0+/, '');
     const normalizedFolio = normalize(folio);
 
     const rowIndex = rows.findIndex(r => normalize(r[0]) === normalizedFolio);
     
     if (rowIndex === -1) {
-      console.warn(`[SHEETS ERROR] Folio ${folio} (Norm: ${normalizedFolio}) no encontrado.`);
-      logSheets(`Folio ${folio} (Norm: ${normalizedFolio}) NOT FOUND`);
+      console.warn(`[SHEETS ERROR] Folio ${folio} no encontrado.`);
       return;
     }
 
     const sheetRow = rowIndex + 1;
 
-    // Photos and Status columns: P (photoCaja), Q (photoFinal), N (status)
-    const { largo, ancho, profundidad, m2, status } = updates;
+    // Columna N: status, P: photoCaja, Q: photoFinal, M: tipoBache, I-L: measurements, T: Responsable
+    const { largo, ancho, profundidad, m2, status, usuario } = updates;
     const photoCaja = updates.photocaja || updates.photoCaja;
     const photoFinal = updates.photofinal || updates.photoFinal;
     const tipoBache = updates.tipobache || updates.tipoBache;
 
-    if (largo) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
+    const batchUpdates = [];
+
+    if (measurementsExist(largo, ancho, profundidad)) {
+      batchUpdates.push({
         range: `Hoja 1!I${sheetRow}:L${sheetRow}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[largo, ancho, profundidad, m2]] },
+        values: [[largo, ancho, profundidad, m2]]
       });
     }
 
-    if (photoCaja) {
+    if (photoCaja) batchUpdates.push({ range: `Hoja 1!P${sheetRow}`, values: [[photoCaja]] });
+    if (photoFinal) batchUpdates.push({ range: `Hoja 1!Q${sheetRow}`, values: [[photoFinal]] });
+    if (status) batchUpdates.push({ range: `Hoja 1!N${sheetRow}`, values: [[status]] });
+    if (tipoBache) batchUpdates.push({ range: `Hoja 1!M${sheetRow}`, values: [[tipoBache]] });
+    if (usuario) batchUpdates.push({ range: `Hoja 1!T${sheetRow}`, values: [[usuario]] });
+
+    for (const update of batchUpdates) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: sheetId,
-        range: `Hoja 1!P${sheetRow}`,
+        range: update.range,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[photoCaja]] },
-      });
-    }
-    if (photoFinal) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
-        range: `Hoja 1!Q${sheetRow}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[photoFinal]] },
-      });
-    }
-    if (status) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
-        range: `Hoja 1!N${sheetRow}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[status]] },
-      });
-    }
-    if (tipoBache) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
-        range: `Hoja 1!M${sheetRow}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[tipoBache]] },
+        requestBody: { values: update.values },
       });
     }
     
-    console.log(`[SHEETS SUCCESS] Update exitosa para Folio ${folio}`);
     logSheets(`Update SUCCESS for ${folio}`);
   } catch (err) {
     const errorData = err.response ? err.response.data : err.message;
     console.error('[SHEETS ERROR] updateReportInSheet failed:', errorData);
-    logSheets(`Update FAILED for ${folio}`, errorData);
   }
+}
+
+function measurementsExist(l, a, p) {
+  return l !== undefined || a !== undefined || p !== undefined;
 }
