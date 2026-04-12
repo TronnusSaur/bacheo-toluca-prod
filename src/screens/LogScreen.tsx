@@ -41,7 +41,8 @@ export default function LogScreen() {
       let apiReports: Report[] = []
       try {
         const response = await apiFetch('/api/reports')
-        apiReports = await response.json()
+        const json = await response.json()
+        apiReports = Array.isArray(json) ? json : []
       } catch (e) {
         console.warn('[OFFLINE] No se pudo conectar al servidor, usando solo datos locales.')
       }

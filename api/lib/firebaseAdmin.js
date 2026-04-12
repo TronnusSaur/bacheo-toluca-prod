@@ -71,25 +71,51 @@ export async function verifyFirebaseToken(req) {
   }
 }
 
+import pool, { initDb } from './db.js';
+
 /**
  * Express middleware that requires a valid Firebase token.
- * Attaches the decoded user info to req.firebaseUser.
+ * Attaches decoded user info AND database role/assignments to req.user.
  */
-export function requireAuth(req, res, next) {
-  verifyFirebaseToken(req)
-    .then(user => {
-      if (!user) {
-        return res.status(401).json({ 
-          error: 'No autorizado. Se requiere iniciar sesión.' 
-        });
-      }
-      req.firebaseUser = user;
-      next();
-    })
-    .catch(err => {
-      console.error('[AUTH MIDDLEWARE ERROR]', err);
+export async function requireAuth(req, res, next) {
+  try {
+    const firebaseUser = await verifyFirebaseToken(req);
+    
+    if (!firebaseUser) {
       return res.status(401).json({ 
-        error: 'Error de autenticación' 
+        error: 'No autorizado. Se requiere iniciar sesión.' 
       });
+    }
+
+    // Ensure tables exist before querying (handles cold starts)
+    await initDb();
+
+    // Lookup user in our DB for role and assignments
+    // Wrapped in its own try/catch so a DB error doesn't block all authenticated users
+    let dbUser = { role: 'RESIDENTE', assigned_contracts: [] };
+    try {
+      const { rows } = await pool.query(
+        'SELECT role, assigned_contracts FROM app_users WHERE email = $1',
+        [firebaseUser.email]
+      );
+      if (rows[0]) dbUser = rows[0];
+    } catch (dbErr) {
+      // Log but don't fail auth — table may be mid-migration
+      console.warn('[AUTH] app_users query failed, using restricted defaults:', dbErr.message);
+    }
+
+    // Attach combined user object
+    req.user = {
+      ...firebaseUser,
+      role: dbUser.role,
+      assignments: dbUser.assigned_contracts || []
+    };
+
+    next();
+  } catch (err) {
+    console.error('[AUTH MIDDLEWARE ERROR]', err);
+    return res.status(401).json({ 
+      error: 'Error de autenticación' 
     });
+  }
 }

@@ -50,10 +50,21 @@ export default function FormScreen() {
   }
 
   useEffect(() => {
-    fetch('/api/catalogs/contracts')
+    apiFetch('/api/catalogs/contracts')
       .then(res => res.json())
       .then(data => {
-        setContracts(data);
+        const list = Array.isArray(data) ? data : [];
+        setContracts(list);
+        // Auto-select if only 1 contract (Resident tier)
+        if (list.length === 1) {
+          const first = list[0];
+          setSelectedContract(first);
+          setFormData(prev => ({ 
+            ...prev, 
+            contractId: first.id,
+            delegacion: first.delegacion
+          }));
+        }
       })
       .catch((err) => {
         console.error('[CONTRATOS ERROR] No se pudieron cargar:', err);
@@ -87,9 +98,8 @@ export default function FormScreen() {
       async (position) => {
         const { latitude, longitude } = position.coords
         try {
-          const response = await fetch('/api/radar', {
+          const response = await apiFetch('/api/radar', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lat: latitude, lng: longitude })
           })
           const data = await response.json()

@@ -47,7 +47,7 @@ export default function MapScreen() {
   useEffect(() => {
     fetch('/api/geojson/delegations').then(res => res.json()).then(data => { setDelegations(data); setLoading(false); }).catch(() => setLoading(false))
     fetch('/api/geojson').then(res => res.json()).then(data => setUtbs(data))
-    apiFetch('/api/reports').then(res => res.json()).then(data => setReports(data))
+    apiFetch('/api/reports').then(res => res.json()).then(data => setReports(Array.isArray(data) ? data : []))
   }, [])
 
   const delegationStyle = { fillColor: '#00b8a3', weight: 2, opacity: 1, color: '#0f172a', fillOpacity: 0.05 };
