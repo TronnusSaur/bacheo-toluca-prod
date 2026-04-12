@@ -277,30 +277,37 @@ app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) =
       folio = `${prefix}${nextNum.toString().padStart(4, '0')}`;
     }
 
-    // Check for duplicate folio before insert
-    const existing = await pool.query('SELECT folio FROM reports WHERE folio = $1', [folio]);
+    // Check for duplicate folio before insert and implement self-healing
+    const existing = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
+    
+    let newReport;
+
     if (existing.rowCount > 0) {
-      return res.status(409).json({ error: `El folio ${folio} ya existe en la base de datos. Usa un número diferente.` });
+      newReport = existing.rows[0];
+      const hasPhoto = !!(newReport.photourl || newReport.photoUrl);
+      if (hasPhoto) {
+        return res.status(409).json({ error: `El folio ${folio} ya existe en la base de datos y tiene foto. Usa un número diferente.` });
+      }
+      console.log(`[RECOVERY] Folio ${folio} existe sin foto (posible timeout previo). Reanudando proceso de Drive/Sheets.`);
+    } else {
+      // Sanitize string fields
+      const safeLocationDesc = sanitizeString(locationDesc);
+      const safeDelegacion = sanitizeString(delegacion, 100);
+      const safeColonia = sanitizeString(colonia, 100);
+      const safeTipoBache = sanitizeString(tipoBache, 50);
+      const safeCalle1 = sanitizeString(calle1, 200);
+      const safeCalle2 = sanitizeString(calle2, 200);
+      const safeEmpresaName = sanitizeString(empresaName, 200);
+      const safeContractId = sanitizeString(contractId, 50);
+
+      // 1. Initial Insert into Postgres
+      const result = await pool.query(
+        `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO', $12) RETURNING *`,
+        [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, req.user.email]
+      );
+      newReport = result.rows[0];
     }
-
-    // Sanitize string fields
-    const safeLocationDesc = sanitizeString(locationDesc);
-    const safeDelegacion = sanitizeString(delegacion, 100);
-    const safeColonia = sanitizeString(colonia, 100);
-    const safeTipoBache = sanitizeString(tipoBache, 50);
-    const safeCalle1 = sanitizeString(calle1, 200);
-    const safeCalle2 = sanitizeString(calle2, 200);
-    const safeEmpresaName = sanitizeString(empresaName, 200);
-    const safeContractId = sanitizeString(contractId, 50);
-
-    // 1. Initial Insert into Postgres
-    const result = await pool.query(
-      `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO', $12) RETURNING *`,
-      [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, req.user.email]
-    );
-
-    const newReport = result.rows[0];
     let driveLink = null;
     let driveOk = false;
     let sheetsOk = false;
