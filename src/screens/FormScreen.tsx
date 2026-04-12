@@ -161,8 +161,11 @@ export default function FormScreen() {
       submission.append('tipoBache', formData.tipoBache);
     }
 
-    // For the online attempt, send the original (server does its own Sharp compression)
-    if (photoFile) {
+    // For the online attempt, send the already COMPRESSED buffer to prevent Vercel chunks/timeouts
+    if (photoBuffer) {
+      submission.append('photo', new Blob([photoBuffer], { type: 'image/jpeg' }), 'inicial.jpg');
+    } else if (photoFile) {
+      // Fallback if compression somehow failed but file exists
       submission.append('photo', photoFile, 'inicial.jpg');
     }
 

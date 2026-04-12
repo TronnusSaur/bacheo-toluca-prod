@@ -23,6 +23,7 @@ export async function getOrCreateFolder(folderName, parentId) {
     const response = await drive.files.list({ 
       q: query,
       fields: 'files(id, name)',
+      corpora: 'allDrives',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });
@@ -57,6 +58,7 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
     const checkRes = await drive.files.list({
       q: query,
       fields: 'files(id)',
+      corpora: 'allDrives',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });

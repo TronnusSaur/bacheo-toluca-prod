@@ -115,7 +115,9 @@ export async function updateReportInSheet(sheetId, folio, updates) {
     const { largo, ancho, profundidad, m2, status, usuario } = updates;
     const photoCaja = updates.photocaja || updates.photoCaja;
     const photoFinal = updates.photofinal || updates.photoFinal;
-    const tipoBache = updates.tipobache || updates.tipoBache;
+    // Normalize and strip 'CAJA ' from tipoBache
+    const rawTipo = updates.tipobache || updates.tipoBache || '';
+    const tipoBache = rawTipo.replace(/^CAJA\s+/i, '').trim() || null;
 
     const batchUpdates = [];
 
