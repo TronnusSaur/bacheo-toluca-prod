@@ -595,8 +595,8 @@ app.get('/api/maintenance/provision-users', async (req, res) => {
 
     // --- Hardcoded Admins ---
     const adminUsers = [
-      { fullName: 'Juan Pablo Admin', email: 'juanpablobumblebee@gmail.com', role: 'ADMIN', contracts: [], password: null },
-      { fullName: 'Sorano Admin DGOP', email: 'soranoautodgop@gmail.com',    role: 'ADMIN', contracts: [], password: null },
+      { fullName: 'Juan Pablo Admin',  email: 'juanpablobumblebee@gmail.com', role: 'ADMIN', contracts: [], password: null },
+      { fullName: 'Sorano Auto DGOP',  email: 'soranoautodgop@gmail.com',     role: 'ADMIN', contracts: [], password: 'DGOP2025-2027' },
     ];
 
     // --- Process all users ---
