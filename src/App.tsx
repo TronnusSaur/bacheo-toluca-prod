@@ -16,12 +16,16 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('METRICAS')
   const [pendingCount, setPendingCount] = useState(0)
   const [user, setUser] = useState<User | null>(null)
+  const [userProfile, setUserProfile] = useState<{role: string, assignments: string[]} | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
 
   // Listen to Firebase auth state (auto-restores from cache, works offline)
   useEffect(() => {
     const unsubscribe = onAuthChange((firebaseUser) => {
       setUser(firebaseUser)
+      if (!firebaseUser) {
+        setUserProfile(null)
+      }
       setAuthLoading(false)
     })
     return () => unsubscribe()
@@ -33,6 +37,18 @@ export default function App() {
 
     async function initApp() {
       try {
+        // Fetch extended profile (role/assignments)
+        import('./lib/apiFetch').then(({ apiFetch }) => {
+          apiFetch('/api/profile')
+            .then(res => res.json())
+            .then(profile => {
+               if (profile && !profile.error) {
+                  setUserProfile(profile);
+               }
+            })
+            .catch(e => console.warn('[PROFILE] Error fetching profile:', e));
+        });
+
         registerAutoSync(({ synced }) => {
           if (synced > 0) {
             countPendingReports().then(setPendingCount).catch(() => {});
@@ -148,8 +164,8 @@ export default function App() {
 
       <main className="app-main overflow-y-auto">
         {activeTab === 'METRICAS' && <MetricsScreen />}
-        {activeTab === 'NUEVO' && <FormScreen />}
-        {activeTab === 'BITACORA' && <LogScreen />}
+        {activeTab === 'NUEVO' && <FormScreen userProfile={userProfile} />}
+        {activeTab === 'BITACORA' && <LogScreen userProfile={userProfile} />}
         {activeTab === 'MAPA' && <MapScreen />}
       </main>
     </div>

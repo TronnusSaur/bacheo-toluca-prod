@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff } from 'lucide-react'
+import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff, DatabaseBackup, AlertCircle } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
 import { savePendingReport, getPendingReports } from '../lib/offlineStore'
 import { compressImage } from '../lib/imageUtils'
@@ -20,7 +20,7 @@ interface Report {
   isOffline?: boolean;
 }
 
-export default function LogScreen() {
+export default function LogScreen({ userProfile }: { userProfile: any }) {
   const [reports, setReports] = useState<Report[]>([])
   const [loading, setLoading] = useState(true)
   const [contracts, setContracts] = useState<any[]>([])
@@ -62,14 +62,20 @@ export default function LogScreen() {
           colonia: p.fields.colonia,
           status: 'DETECTADO',
           created_at: p.savedAt,
-          isOffline: true
+          isOffline: true,
+          serverMissing: p.serverMissing // Mantener flag de fallback
         }))
+
+      // 3.5. Filtro de Seguridad RBAC para datos offline
+      const filteredPending = userProfile?.role === 'ADMIN' 
+        ? pendingAperturas 
+        : pendingAperturas.filter(p => userProfile?.assignments?.includes(p.contractId));
 
       // 4. Integrar estados de actualizaciones pendientes
       const finalReports = [...apiReports]
       
-      // Añadir aperturas que no están en el servidor
-      pendingAperturas.forEach(pa => {
+      // Añadir aperturas que no están en el servidor (filtradas)
+      filteredPending.forEach(pa => {
         if (!finalReports.find(r => r.folio === pa.folio)) {
           finalReports.unshift(pa as any)
         }
@@ -118,7 +124,9 @@ export default function LogScreen() {
     const file = e.target.files?.[0]
     if (!file || !selectedReport) return
 
-    const phase = selectedReport.status === 'DETECTADO' ? 'caja' : 'terminado'
+    // Snapshot del reporte para evitar closures obsoletas durante operaciones async
+    const report = selectedReport;
+    const phase = report.status === 'DETECTADO' ? 'caja' : 'terminado'
     setSyncStatus(`COMPRIMIENDO FOTO...`)
     
     let compressedBlob: Blob | null = null;
@@ -129,6 +137,7 @@ export default function LogScreen() {
       return;
     }
 
+    setSyncStatus('SUBIENDO FOTO...');
     try {
       const formData = new FormData()
       formData.append('photo', compressedBlob, 'upload.jpg')
@@ -143,68 +152,92 @@ export default function LogScreen() {
         formData.append('tipoBache', calculatedTipo)
       }
 
-      const res = await apiFetch(`/api/reports/${selectedReport.folio}/photo`, {
+      const res = await apiFetch(`/api/reports/${report.folio}/photo`, {
         method: 'POST',
         body: formData
       })
+
       if (res.ok) {
         setShowSuccessModal(true)
         setSyncStatus(null)
-        setCurrentStep('PHOTO') // Reset after success
+        setCurrentStep('PHOTO')
         fetchReports()
-        setSelectedReport(null) // Go back to list
-        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 }) // RESET
-      } else if (res.status === 409) {
-        setSyncStatus(`INFO: ESTE FOLIO YA TIENE ESTA FASE REGISTRADA.`)
-        fetchReports() // Re-sincronizar UI
         setSelectedReport(null)
-      } else {
-        const error = await res.json()
-        setSyncStatus(`ERROR: ${error.error || 'Fallo servidor'}`)
+        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 })
+        return;
       }
-    } catch (err) {
-      // OFFLINE SUPPORT
-      try {
-        if (!compressedBlob) throw new Error("No hay imagen comprimida disponible");
-        
-        const photoBuffer = await compressedBlob.arrayBuffer();
-        const calculatedTipo = phase === 'caja' 
-          ? (parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL')
-          : (selectedReport.status === 'EN PROCESO' ? '' : 'SUPERFICIAL'); // fallback
 
-        await savePendingReport({
-          type: 'UPDATE',
-          phase: phase as any,
-          fields: {
-            folio: selectedReport.folio,
-            contractId: selectedReport.contractid || selectedReport.contractId || '',
-            empresaName: '', 
-            lat: 0, lng: 0, 
-            largo: measures.largo,
-            ancho: measures.ancho,
-            profundidad: measures.profundidad,
-            m2: measures.m2.toString(),
-            locationDesc: selectedReport.locationdesc || selectedReport.locationDesc || '',
-            calle1: '', calle2: '',
-            delegacion: selectedReport.delegacion,
-            colonia: selectedReport.colonia,
-            tipoBache: calculatedTipo
-          },
-          photoBuffer,
-          savedAt: new Date().toISOString()
-        });
-        
-        setSyncStatus('FOTO GUARDADA LOCALMENTE (MODO OFFLINE)');
-        setTimeout(() => {
-          setShowSuccessModal(true);
-          setSyncStatus(null);
-          fetchReports();
-          setSelectedReport(null);
-          setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
-        }, 1500);
-      } catch (dbErr) {
-        setSyncStatus(`FALLO CRÍTICO: ${dbErr instanceof Error ? dbErr.message : 'Error de almacenamiento'}`);
+      if (res.status === 409) {
+        setSyncStatus(`INFO: ESTE FOLIO YA TIENE ESTA FASE REGISTRADA.`)
+        fetchReports()
+        setSelectedReport(null)
+        return;
       }
+
+      // Para 404 y cualquier otro error: guardar localmente sin mostrar error al usuario
+      if (res.status === 404) {
+        console.warn(`[FALLBACK-404] Folio ${report.folio} no existe en servidor aún. Guardando foto localmente.`);
+        await saveToOffline(phase, compressedBlob, report);
+        return;
+      }
+
+      // Cualquier otro error del servidor (500, 403, etc)
+      let errorMsg = 'Fallo del servidor';
+      try {
+        const errorBody = await res.json();
+        errorMsg = errorBody.error || errorMsg;
+      } catch (_) { /* body no es JSON (ej. Vercel HTML de error) */ }
+      setSyncStatus(`ERROR: ${errorMsg} (${res.status})`);
+
+    } catch (err) {
+      // Error de red: sin conexión, timeout, etc. -> guardar localmente
+      console.warn(`[FALLBACK-NET] Error de red al subir foto de ${report.folio}. Guardando localmente.`, err);
+      await saveToOffline(phase, compressedBlob, report);
+    }
+  }
+
+  const saveToOffline = async (phase: string, compressedBlob: Blob | null, report: Report) => {
+    try {
+      if (!compressedBlob) throw new Error("No hay imagen comprimida disponible");
+      
+      const photoBuffer = await compressedBlob.arrayBuffer();
+      const calculatedTipo = phase === 'caja' 
+        ? (parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL')
+        : '';
+
+      await savePendingReport({
+        type: 'UPDATE',
+        phase: phase as any,
+        fields: {
+          folio: report.folio,
+          contractId: report.contractid || report.contractId || '',
+          empresaName: '', 
+          lat: 0, lng: 0, 
+          largo: measures.largo,
+          ancho: measures.ancho,
+          profundidad: measures.profundidad,
+          m2: measures.m2.toString(),
+          locationDesc: report.locationdesc || report.locationDesc || '',
+          calle1: '', calle2: '',
+          delegacion: report.delegacion,
+          colonia: report.colonia,
+          tipoBache: calculatedTipo
+        },
+        photoBuffer,
+        savedAt: new Date().toISOString(),
+        serverMissing: true
+      });
+      
+      setSyncStatus('FOTO GUARDADA LOCALMENTE. SE SUBIRÁ AUTOMÁTICAMENTE.');
+      setTimeout(() => {
+        setShowSuccessModal(true);
+        setSyncStatus(null);
+        fetchReports();
+        setSelectedReport(null);
+        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
+      }, 1800);
+    } catch (dbErr) {
+      setSyncStatus(`FALLO CRÍTICO: ${dbErr instanceof Error ? dbErr.message : 'Error de almacenamiento'}`);
     }
   }
 
@@ -418,10 +451,14 @@ export default function LogScreen() {
               onClick={() => report.status !== 'TERMINADO' && setSelectedReport(report)}
             >
                <div className="card-top">
-                  <span className="folio-tag">
-                     {report.isOffline && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
-                     {report.folio}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                     <span className="folio-tag">
+                        {report.isOffline && !report.serverMissing && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                        {(report.isOffline && report.serverMissing && userProfile?.role === 'ADMIN') && <DatabaseBackup size={14} className="inline mr-2 text-rose-500" />}
+                        {(report.isOffline && report.serverMissing && userProfile?.role !== 'ADMIN') && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                        {report.folio}
+                     </span>
+                  </div>
                   <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')} ${report.isOffline ? 'offline-tint' : ''}`}>
                     {report.isOffline 
                       ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 

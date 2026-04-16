@@ -16,7 +16,7 @@ interface Contract {
   delegacion: string;
 }
 
-export default function FormScreen() {
+export default function FormScreen({ userProfile }: { userProfile: any }) {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null)
   const [formData, setFormData] = useState({

@@ -217,6 +217,14 @@ app.get('/api/reports', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/profile', requireAuth, async (req, res) => {
+  res.json({
+    email: req.user.email,
+    role: req.user.role,
+    assignments: req.user.assignments || []
+  });
+});
+
 app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) => {
   try {
     const { 

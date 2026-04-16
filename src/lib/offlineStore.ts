@@ -54,6 +54,8 @@ export interface PendingReport {
   /** La foto comprimida como ArrayBuffer (nullable si no se tomó) */
   photoBuffer: ArrayBuffer | null;
   savedAt: string; // ISO date string
+  /** Indica si el servidor falló con 404 (para iconografía especial) */
+  serverMissing?: boolean;
 }
 
 /** Guarda un reporte pendiente en IndexedDB */
