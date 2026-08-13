@@ -1,9 +1,10 @@
 /**
  * apiFetch.ts
- * Wrapper para fetch que automáticamente adjunta el Supabase ID/Session Token.
+ * Wrapper para fetch que automáticamente adjunta el Supabase ID/Session Token
+ * y dirige las solicitudes a la API de Vercel/Express.
  */
 
-import { getIdToken } from './supabase';
+import { getIdToken, getDemoUser } from './supabase';
 
 const VERCEL_API_BASE = 'https://bacheo-toluca-prod.vercel.app';
 
@@ -11,12 +12,16 @@ export async function apiFetch(
   url: string, 
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = await getIdToken();
+  let token = await getIdToken();
+  const demoUser = getDemoUser();
   
   const headers = new Headers(options.headers || {});
   
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
+  } else if (demoUser) {
+    // If in demo/testing mode, attach demo bearer token
+    headers.set('Authorization', `Bearer demo-admin-token`);
   }
   
   // Auto-add Content-Type for JSON string bodies if not set
@@ -24,10 +29,13 @@ export async function apiFetch(
     headers.set('Content-Type', 'application/json');
   }
   
-  // Resolve absolute URL: relative URLs go to window.location.origin in browser or Vercel base in native
+  // Resolve absolute URL:
+  // If already full URL (http://...), use as is.
+  // If running on Vercel (hostname includes vercel.app), use relative path /api/...
+  // Otherwise (local dev, Supabase Studio tab 192.168.1.128:8000, or mobile app), direct to VERCEL_API_BASE.
   let absoluteUrl = url;
   if (url.startsWith('/')) {
-    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && !window.location.hostname.includes('127.0.0.1')) {
+    if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
       absoluteUrl = url;
     } else {
       absoluteUrl = `${VERCEL_API_BASE}${url}`;

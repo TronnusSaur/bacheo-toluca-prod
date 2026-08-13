@@ -11,13 +11,19 @@ import https from 'https';
 import pool, { initDb, saveTokens } from './lib/db.js';
 import { getAuthUrl, getTokensFromCode, setClientTokens } from './lib/auth.js';
 import { uploadFile, getOrCreateFolder } from './lib/drive.js';
-import { appendReportToSheet, updateReportInSheet } from './lib/sheets.js';
+import { appendReportToSheet, updateReportInSheet, getAllReportsFromSheet, ensureSheetHeaders } from './lib/sheets.js';
 import { supabase, initSupabaseTables, requireSupabaseAuth } from './lib/supabaseClient.js';
 
 const app = express();
 const upload = multer({ dest: '/tmp/' });
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+app.options('*', cors());
 app.use(express.json());
 
 // --- VALIDATION HELPERS ---
@@ -53,10 +59,10 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Cache for reports reads
+// Cache for reports reads (SP REGIS architecture)
 let reportsCache = [];
 let lastCacheTime = 0;
-const CACHE_TTL = 10000; // 10s
+const CACHE_TTL = 15000; // 15s
 
 // Deduplication map for offline retries
 const recentOfflineIds = new Map();
@@ -198,27 +204,56 @@ app.get('/api/geojson/delegations', (req, res) => {
 // --- REPORTS API ---
 app.get('/api/reports', requireSupabaseAuth, async (req, res) => {
   try {
+    // Return cache if fresh
     if (Date.now() - lastCacheTime < CACHE_TTL && reportsCache.length > 0) {
       return res.json(reportsCache);
     }
 
-    // Target bacheo_pruebas_app table in Supabase
-    const { data: supaReports, error } = await supabase
-      .from('bacheo_pruebas_app')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const sheetId = process.env.SHEET_ID;
 
-    if (!error && Array.isArray(supaReports)) {
-      reportsCache = supaReports;
-      lastCacheTime = Date.now();
-      return res.json(supaReports);
+    // 1. Primordial Read from Google Sheets (matching SP REGIS)
+    if (sheetId) {
+      try {
+        const sheetReports = await getAllReportsFromSheet(sheetId);
+        if (sheetReports.length > 0) {
+          reportsCache = sheetReports;
+          lastCacheTime = Date.now();
+          return res.json(sheetReports);
+        }
+      } catch (sheetErr) {
+        console.warn('[REPORTS READ WARN] Error al leer Google Sheets:', sheetErr.message);
+      }
     }
 
-    // Fallback to local Postgres pool if Supabase table is empty
-    const { rows } = await pool.query('SELECT * FROM reports ORDER BY created_at DESC');
-    reportsCache = rows;
-    lastCacheTime = Date.now();
-    res.json(rows);
+    // 2. Read from Supabase bacheo_pruebas_app table
+    try {
+      const { data: supaReports, error } = await supabase
+        .from('bacheo_pruebas_app')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(supaReports) && supaReports.length > 0) {
+        reportsCache = supaReports;
+        lastCacheTime = Date.now();
+        return res.json(supaReports);
+      }
+    } catch (supaErr) {
+      console.warn('[REPORTS READ WARN] Error al leer Supabase:', supaErr.message);
+    }
+
+    // 3. Fallback to local Postgres pool
+    try {
+      const { rows } = await pool.query('SELECT * FROM bacheo_pruebas_app ORDER BY created_at DESC');
+      if (rows.length > 0) {
+        reportsCache = rows;
+        lastCacheTime = Date.now();
+        return res.json(rows);
+      }
+    } catch (dbErr) {
+      // ignore
+    }
+
+    res.json(reportsCache);
   } catch (err) {
     console.error('[REPORTS GET ERROR]', err);
     res.json(reportsCache);
@@ -235,11 +270,7 @@ app.get('/api/profile', requireSupabaseAuth, async (req, res) => {
 
 /**
  * POST /api/reports (Apertura Inicial)
- * Pipeline:
- * 1. Multer temp file read into memory buffer
- * 2. Upload to Google Drive (folder per contract/folio)
- * 3. Append row to Google Sheets (Hoja Master A-T)
- * 4. Upsert/Insert record into bacheo_pruebas_app in Supabase (192.168.1.128:8000)
+ * Direct Multipart upload: Photo -> Google Drive -> Google Sheets -> Supabase bacheo_pruebas_app
  */
 app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req, res) => {
   try {
@@ -257,17 +288,15 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
       return res.json({ ok: true, folio: assignedFolio, duplicate: true });
     }
 
-    // Validate inputs
-    if (!contractId || !empresaName) {
-      cleanupTempFile(req.file);
-      return res.status(400).json({ error: 'contractId y empresaName son requeridos' });
-    }
+    // Input Sanitization
+    const safeContractId = sanitizeString(contractId || 'CONTRATO-01', 50);
+    const safeEmpresaName = sanitizeString(empresaName || 'Empresa Bacheo', 200);
 
     let folio = manualFolio;
     if (folio && folio !== 'undefined') {
       folio = sanitizeString(folio, 10);
     } else {
-      const contractNum = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+      const contractNum = (safeContractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
       const randomSeq = Math.floor(1000 + Math.random() * 9000);
       folio = `${contractNum}${randomSeq}`;
     }
@@ -277,13 +306,11 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
     }
 
     const safeLocationDesc = sanitizeString(locationDesc);
-    const safeDelegacion = sanitizeString(delegacion, 100);
-    const safeColonia = sanitizeString(colonia, 100);
-    const safeTipoBache = sanitizeString(tipoBache, 50);
+    const safeDelegacion = sanitizeString(delegacion || 'TOLUCA', 100);
+    const safeColonia = sanitizeString(colonia || 'CENTRO', 100);
+    const safeTipoBache = sanitizeString(tipoBache || 'SUPERFICIAL', 50);
     const safeCalle1 = sanitizeString(calle1, 200);
     const safeCalle2 = sanitizeString(calle2, 200);
-    const safeEmpresaName = sanitizeString(empresaName, 200);
-    const safeContractId = sanitizeString(contractId, 50);
     const safeUserEmail = req.user.email || 'admin@bacheo.gob.mx';
 
     let photoBuffer = null;
@@ -349,7 +376,7 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
     };
 
     // =========================================================================
-    // PASO 2 (PRIMORDIAL - REGISTRO TABULAR): Google Sheets Master Append
+    // PASO 2 (PRIMORDIAL - REGISTRO TABULAR): Google Sheets Append (Hoja Master A-T)
     // =========================================================================
     if (process.env.SHEET_ID) {
       try {
@@ -378,20 +405,9 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
       console.warn('[SUPABASE EXCEPTION]', supaEx.message);
     }
 
-    // Non-blocking local Postgres backup attempt
-    try {
-      await pool.query(
-        `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, photoUrl, status, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'DETECTADO', $13)
-         ON CONFLICT (folio) DO UPDATE SET photoUrl = EXCLUDED.photoUrl`,
-        [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, driveLink, safeUserEmail]
-      );
-    } catch (dbErr) {
-      // Ignore DB pool errors
-    }
-
-    // Invalidate local read cache
+    // Update in-memory cache immediately
     reportsCache.unshift(reportObj);
+    lastCacheTime = Date.now();
 
     res.status(201).json({
       folio: reportObj.folio,
@@ -420,7 +436,6 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
 
   try {
     const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
-    const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
 
     let photoBuffer = null;
     if (req.file) {
@@ -492,18 +507,12 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
 
     // 3. Supabase Update in bacheo_pruebas_app
     try {
-      const { error: supaErr } = await supabase
+      await supabase
         .from('bacheo_pruebas_app')
         .update(updates)
         .eq('folio', folio);
-
-      if (supaErr) {
-        console.warn(`[SUPABASE UPDATE WARN] bacheo_pruebas_app:`, supaErr.message);
-      } else {
-        console.log(`[SUPABASE UPDATE SUCCESS] ✅ Folio ${folio} actualizado en bacheo_pruebas_app`);
-      }
     } catch (supaEx) {
-      console.warn('[SUPABASE UPDATE EXCEPTION]', supaEx.message);
+      // ignore
     }
 
     res.json({ success: true, link: driveLink, status: nextStatus });
