@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff, DatabaseBackup, AlertCircle } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
-import { savePendingReport, getPendingReports } from '../lib/offlineStore'
+import { saveReportJSON, saveReportPhoto, getPendingItems, getReportJSON, addPendingItem } from '../lib/robustStore'
+import { Preferences } from '@capacitor/preferences'
 import { compressImage } from '../lib/imageUtils'
 import { apiFetch } from '../lib/apiFetch'
 import './LogScreen.css'
@@ -32,6 +33,7 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
     largo: '', ancho: '', profundidad: '', m2: 0 
   })
   const [currentStep, setCurrentStep] = useState<'PHOTO' | 'CONTINUE'>('PHOTO')
+  const [syncingFolios, setSyncingFolios] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const fetchReports = async () => {
@@ -41,25 +43,51 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
       let apiReports: Report[] = []
       try {
         const response = await apiFetch('/api/reports')
-        const json = await response.json()
-        apiReports = Array.isArray(json) ? json : []
+        if (response.ok) {
+          const json = await response.json()
+          apiReports = Array.isArray(json) ? json : []
+          // Guardar listado en el caché local para uso offline
+          await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(apiReports) })
+        } else {
+          throw new Error('Servidor respondió con código de error')
+        }
       } catch (e) {
         console.warn('[OFFLINE] No se pudo conectar al servidor, usando solo datos locales.')
+        // Recuperar desde el caché local
+        const { value } = await Preferences.get({ key: 'cached_reports_list' })
+        if (value) {
+          try {
+            apiReports = JSON.parse(value)
+            console.log('[OFFLINE] Cargados reportes desde el cache local:', apiReports.length)
+          } catch {
+            apiReports = []
+          }
+        }
       }
 
-      // 2. Cargar reportes pendientes de IndexedDB
-      const pending = await getPendingReports()
+      // 2. Cargar reportes pendientes de robustStore
+      const pendingItems = await getPendingItems()
+      const pending: any[] = []
+      for (const itemKey of pendingItems) {
+        const parts = itemKey.split('_')
+        const folio = parts[0]
+        const phase = parts.slice(1).join('_')
+        const reportData = await getReportJSON(folio, phase)
+        if (reportData) {
+          pending.push(reportData)
+        }
+      }
       
       // 3. Mapear aperturas pendientes a formato Report
       const pendingAperturas = pending
         .filter(p => p.type === 'APERTURA')
         .map(p => ({
-          id: -(p.id || Date.now()), // ID negativo temporal
-          folio: p.fields.folio,
-          contractId: p.fields.contractId,
-          locationDesc: p.fields.locationDesc,
-          delegacion: p.fields.delegacion,
-          colonia: p.fields.colonia,
+          id: -Math.abs((p.fields?.folio || '').split('').reduce((a: number, b: string) => { const h = (a << 5) - a + b.charCodeAt(0); return h & h; }, 0) || Date.now()), // ID numérico temporal
+          folio: p.fields?.folio || '',
+          contractId: p.fields?.contractId || '',
+          locationDesc: p.fields?.locationDesc || '',
+          delegacion: p.fields?.delegacion || '',
+          colonia: p.fields?.colonia || '',
           status: 'DETECTADO',
           created_at: p.savedAt,
           isOffline: true,
@@ -83,7 +111,7 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
 
       // Marcar reportes del servidor que tienen actualizaciones pendientes locales
       finalReports.forEach(r => {
-        const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields.folio === r.folio)
+        const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields?.folio === r.folio)
         if (relatedUpdates.length > 0) {
           // Si hay UN solo update de 'terminado' o varios que incluyan 'terminado', el estatus es TERMINADO
           const hasTerminado = relatedUpdates.some(up => up.phase === 'terminado')
@@ -114,6 +142,34 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
     fetchReports()
     fetchContracts()
   }, [])
+
+  useEffect(() => {
+    const handleStart = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const { folio } = customEvent.detail;
+      setSyncingFolios(prev => {
+        if (!prev.includes(folio)) {
+          return [...prev, folio];
+        }
+        return prev;
+      });
+    };
+
+    const handleEnd = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const { folio } = customEvent.detail;
+      setSyncingFolios(prev => prev.filter(f => f !== folio));
+      fetchReports();
+    };
+
+    window.addEventListener('sync-item-start', handleStart as EventListener);
+    window.addEventListener('sync-item-end', handleEnd as EventListener);
+
+    return () => {
+      window.removeEventListener('sync-item-start', handleStart as EventListener);
+      window.removeEventListener('sync-item-end', handleEnd as EventListener);
+    };
+  }, []);
 
   const handlePhotoClick = () => {
     fileInputRef.current?.click()
@@ -198,14 +254,12 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
 
   const saveToOffline = async (phase: string, compressedBlob: Blob | null, report: Report) => {
     try {
-      if (!compressedBlob) throw new Error("No hay imagen comprimida disponible");
-      
-      const photoBuffer = await compressedBlob.arrayBuffer();
       const calculatedTipo = phase === 'caja' 
         ? (parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL')
         : '';
 
-      await savePendingReport({
+      // 1. Guardar la info como archivo JSON de metadatos
+      await saveReportJSON(report.folio, phase, {
         type: 'UPDATE',
         phase: phase as any,
         fields: {
@@ -223,10 +277,17 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
           colonia: report.colonia,
           tipoBache: calculatedTipo
         },
-        photoBuffer,
         savedAt: new Date().toISOString(),
         serverMissing: true
       });
+
+      // 2. Guardar la foto físicamente si existe
+      if (compressedBlob) {
+        await saveReportPhoto(report.folio, phase, compressedBlob);
+      }
+
+      // 3. Registrar el folio en la cola multiplataforma
+      await addPendingItem(`${report.folio}_${phase}`);
       
       setSyncStatus('FOTO GUARDADA LOCALMENTE. SE SUBIRÁ AUTOMÁTICAMENTE.');
       setTimeout(() => {
@@ -414,10 +475,54 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
           <h2 className="title-main">Baches</h2>
           <p className="subtitle-main">Seguimiento Operativo</p>
         </div>
-        <button onClick={fetchReports} className="p-2" style={{ background: '#f8fafc', border: 'none', borderRadius: '12px', cursor: 'pointer', color: '#0891b2' }}>
+        <button 
+          onClick={async () => {
+            if (navigator.onLine) {
+              setSyncStatus("COMPROBANDO SINCRONIZACIONES PENDIENTES...");
+              const { syncPendingReports } = await import('../lib/syncService');
+              syncPendingReports(({ synced, failed }) => {
+                if (synced > 0) {
+                  setSyncStatus(`SINCRONIZADOS ${synced} REPORTES.`);
+                  setTimeout(() => setSyncStatus(null), 3000);
+                } else if (failed > 0) {
+                  setSyncStatus(`ERROR AL SINCRONIZAR ${failed} REPORTES.`);
+                  setTimeout(() => setSyncStatus(null), 3000);
+                } else {
+                  setSyncStatus(null);
+                }
+              });
+            }
+            fetchReports();
+          }} 
+          className="p-2" 
+          style={{ background: '#f8fafc', border: 'none', borderRadius: '12px', cursor: 'pointer', color: '#0891b2' }}
+        >
           <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
+
+      {syncStatus && (
+         <div 
+           style={{
+             padding: '1rem',
+             borderRadius: '1rem',
+             textAlign: 'center',
+             fontSize: '9px',
+             fontWeight: 900,
+             textTransform: 'uppercase',
+             letterSpacing: '0.1em',
+             border: '1px solid',
+             marginBottom: '1rem',
+             transition: 'all 0.3s',
+             ...(syncStatus.includes('FALLO') || syncStatus.includes('ERROR') || syncStatus.includes('SIN CONEXIÓN')
+               ? { background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.2)', color: '#ef4444' }
+               : { background: 'rgba(6,182,212,0.1)', borderColor: 'rgba(6,182,212,0.2)', color: '#22d3ee' }
+             )
+           }}
+         >
+           {syncStatus}
+         </div>
+      )}
 
       <div className="filter-group mb-6" style={{ background: '#f1f5f9', padding: '12px', borderRadius: '20px', border: '1px solid #e2e8f0' }}>
         <p className="text-[10px] font-black uppercase text-slate-400 mb-2 px-2">Filtrar por Contrato</p>
@@ -445,24 +550,64 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
           {reports
             .filter((r: Report) => selectedContractFilter === 'ALL' || (r.contractid || r.contractId) === selectedContractFilter)
             .map((report) => (
-            <div 
-              key={report.folio} 
-              className={`report-card ${report.status === 'TERMINADO' ? 'card-locked' : ''}`} 
-              onClick={() => report.status !== 'TERMINADO' && setSelectedReport(report)}
-            >
+             <div 
+               key={report.folio} 
+               className={`report-card ${report.status === 'TERMINADO' && !report.isOffline ? 'card-locked' : ''}`} 
+               onClick={async () => {
+                 if (report.isOffline) {
+                   if (navigator.onLine) {
+                     setSyncStatus(`SINCRONIZANDO FOLIO ${report.folio} MANUALMENTE...`);
+                     const { syncPendingReports } = await import('../lib/syncService');
+                     syncPendingReports(({ synced, failed }) => {
+                       if (synced > 0) {
+                         setSyncStatus(`FOLIO ${report.folio} SINCRONIZADO.`);
+                         setTimeout(() => setSyncStatus(null), 3000);
+                       } else if (failed > 0) {
+                         setSyncStatus(`ERROR AL SINCRONIZAR FOLIO ${report.folio}.`);
+                         setTimeout(() => setSyncStatus(null), 3000);
+                       } else {
+                         setSyncStatus(null);
+                       }
+                     });
+                     return;
+                   } else {
+                     if (report.status !== 'TERMINADO') {
+                       setSelectedReport(report);
+                     } else {
+                       setSyncStatus("DISPOSITIVO SIN CONEXIÓN. NO SE PUEDE SINCRONIZAR.");
+                       setTimeout(() => setSyncStatus(null), 3000);
+                     }
+                     return;
+                   }
+                 }
+                 
+                 if (report.status !== 'TERMINADO') {
+                   setSelectedReport(report);
+                 }
+               }}
+             >
                <div className="card-top">
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                      <span className="folio-tag">
-                        {report.isOffline && !report.serverMissing && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
-                        {(report.isOffline && report.serverMissing && userProfile?.role === 'ADMIN') && <DatabaseBackup size={14} className="inline mr-2 text-rose-500" />}
-                        {(report.isOffline && report.serverMissing && userProfile?.role !== 'ADMIN') && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                        {syncingFolios.includes(report.folio) ? (
+                          <RefreshCcw size={14} className="inline mr-2 text-emerald-400 animate-spin" />
+                        ) : (
+                          <>
+                            {report.isOffline && !report.serverMissing && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                            {(report.isOffline && report.serverMissing && userProfile?.role === 'ADMIN') && <DatabaseBackup size={14} className="inline mr-2 text-rose-500" />}
+                            {(report.isOffline && report.serverMissing && userProfile?.role !== 'ADMIN') && <WifiOff size={14} className="inline mr-2 text-cyan-400" />}
+                          </>
+                        )}
                         {report.folio}
                      </span>
                   </div>
-                  <span className={`status-tag ${report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished')} ${report.isOffline ? 'offline-tint' : ''}`}>
-                    {report.isOffline 
-                      ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 
-                      : report.status}
+                  <span className={`status-tag ${syncingFolios.includes(report.folio) ? 'status-syncing' : (report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished'))} ${report.isOffline && !syncingFolios.includes(report.folio) ? 'offline-tint' : ''}`}>
+                    {syncingFolios.includes(report.folio)
+                      ? 'SUBIENDO...'
+                      : (report.isOffline 
+                          ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 
+                          : report.status)
+                    }
                   </span>
                </div>
                <div className="card-body">

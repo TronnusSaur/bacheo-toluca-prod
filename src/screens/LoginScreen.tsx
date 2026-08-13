@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { LogIn, AlertCircle, Shield } from 'lucide-react'
-import { signIn } from '../lib/firebase'
+import { signIn } from '../lib/supabase'
 import './LoginScreen.css'
 
 interface LoginScreenProps {
@@ -25,19 +25,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       onLoginSuccess()
     } catch (err: any) {
       console.error('[LOGIN ERROR]', err)
-      
-      // Map Firebase error codes to Spanish messages
-      const errorMap: Record<string, string> = {
-        'auth/invalid-email': 'El correo electrónico no es válido',
-        'auth/user-disabled': 'Esta cuenta ha sido deshabilitada',
-        'auth/user-not-found': 'No existe una cuenta con este correo',
-        'auth/wrong-password': 'Contraseña incorrecta',
-        'auth/invalid-credential': 'Credenciales incorrectas',
-        'auth/too-many-requests': 'Demasiados intentos. Espera un momento',
-        'auth/network-request-failed': 'Sin conexión a internet. Verifica tu señal',
-      }
-      
-      setError(errorMap[err.code] || `Error de autenticación: ${err.message}`)
+      setError(err.message || 'Error de autenticación con Supabase')
     } finally {
       setLoading(false)
     }
@@ -52,7 +40,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
             <Shield size={32} />
           </div>
           <h1 className="login-title">Bacheo <span className="login-accent">Toluca</span></h1>
-          <p className="login-subtitle">SISTEMA DE SUPERVISIÓN EN CAMPO</p>
+          <p className="login-subtitle">SISTEMA DE SUPERVISIÓN EN CAMPO (SUPABASE)</p>
         </div>
 
         {/* Error Banner */}

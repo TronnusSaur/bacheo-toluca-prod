@@ -2,11 +2,15 @@ import { google } from 'googleapis';
 import { oauth2Client } from './auth.js';
 import { loadTokens, saveTokens } from './db.js';
 
-/**
- * PRODUCTION GOOGLE CLIENT: Loads tokens from Postgres.
- * Auto-refreshes when the access_token expires using the stored refresh_token.
- */
+let cachedClient = null;
+let cacheExpiry = 0;
+const CACHE_TTL_MS = 50 * 60 * 1000; // 50 minutes
+
 export async function getGoogleClient() {
+  if (cachedClient && Date.now() < cacheExpiry) {
+    return cachedClient;
+  }
+
   // Priority 1: User OAuth2 (Loads from DB, auto-refreshes)
   try {
     const tokens = await loadTokens();
@@ -15,21 +19,21 @@ export async function getGoogleClient() {
       console.log('[GS-CLIENT] Cargando tokens desde DB...');
       oauth2Client.setCredentials(tokens);
 
-      // Auto-refresh if the access_token is expired or about to expire
       const expiryDate = tokens.expiry_date || 0;
-      const isExpired = Date.now() >= expiryDate - 60000; // 1 min buffer
+      const isExpired = Date.now() >= expiryDate - 60000;
 
       if (isExpired && tokens.refresh_token) {
         console.log('[GS-CLIENT] Token expirado, refrescando automáticamente...');
         const { credentials } = await oauth2Client.refreshAccessToken();
-        // Merge refresh_token since refreshAccessToken may not return it
         const newTokens = { ...credentials, refresh_token: tokens.refresh_token };
         await saveTokens(newTokens);
         oauth2Client.setCredentials(newTokens);
         console.log('[GS-CLIENT] Token refrescado y guardado en DB.');
       }
 
-      return oauth2Client;
+      cachedClient = oauth2Client;
+      cacheExpiry = Date.now() + CACHE_TTL_MS;
+      return cachedClient;
     }
   } catch (err) {
     console.error('[GS-CLIENT ERROR] Error al cargar/refrescar tokens desde DB:', err.message);
@@ -37,12 +41,30 @@ export async function getGoogleClient() {
 
   // Priority 2: Service Account (Fallback) 
   if (process.env.GOOGLE_CREDENTIALS) {
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-    const auth = new google.auth.GoogleAuth({
-      credentials: creds,
-      scopes: ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'],
-    });
-    return await auth.getClient();
+    try {
+      let rawCreds = process.env.GOOGLE_CREDENTIALS.trim();
+      let creds;
+      if (typeof rawCreds === 'string') {
+        try {
+          creds = JSON.parse(rawCreds);
+        } catch (e) {
+          creds = JSON.parse(rawCreds.replace(/\\n/g, '\n'));
+        }
+      } else {
+        creds = rawCreds;
+      }
+
+      const auth = new google.auth.GoogleAuth({
+        credentials: creds,
+        scopes: ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'],
+      });
+      const client = await auth.getClient();
+      cachedClient = client;
+      cacheExpiry = Date.now() + CACHE_TTL_MS;
+      return cachedClient;
+    } catch (svcErr) {
+      console.error('[GS-CLIENT SERVICE ACCOUNT ERROR]:', svcErr.message);
+    }
   }
 
   throw new Error('NO AUTH CONFIGURED. Provide GOOGLE_TOKENS in DB or GOOGLE_CREDENTIALS.');

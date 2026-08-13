@@ -10,12 +10,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@supabase/supabase-js": "^2.112.3",
     "@turf/turf": "^7.3.4",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
-    "firebase": "^12.12.0",
-    "firebase-admin": "^13.8.0",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
     "leaflet": "^1.9.4",
@@ -29,6 +32,8 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "@vitejs/plugin-react-swc": "^3.5.0",

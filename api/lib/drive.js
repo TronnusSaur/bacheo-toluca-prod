@@ -14,7 +14,23 @@ function logAudit(msg, data = null) {
   console.log(line); // Use console.log - Vercel filesystem is read-only
 }
 
+/**
+ * OPTIMIZATION: In-memory cache for folder IDs.
+ * Key: "parentId:folderName" → Value: folderId
+ * Contract folders are stable and rarely change, so caching within
+ * the serverless instance lifecycle avoids redundant Drive API calls.
+ */
+const folderCache = new Map();
+
 export async function getOrCreateFolder(folderName, parentId) {
+  const cacheKey = `${parentId}:${folderName}`;
+  
+  // Return cached folder ID if available
+  if (folderCache.has(cacheKey)) {
+    console.log(`[DRIVE] Folder cache HIT: ${folderName}`);
+    return folderCache.get(cacheKey);
+  }
+
   try {
     const auth = await getGoogleClient();
     const drive = google.drive({ version: 'v3', auth });
@@ -29,7 +45,9 @@ export async function getOrCreateFolder(folderName, parentId) {
     });
 
     if (response.data.files && response.data.files.length > 0) {
-      return response.data.files[0].id;
+      const folderId = response.data.files[0].id;
+      folderCache.set(cacheKey, folderId);
+      return folderId;
     }
 
     const res = await drive.files.create({
@@ -41,7 +59,10 @@ export async function getOrCreateFolder(folderName, parentId) {
       supportsAllDrives: true,
       fields: 'id',
     });
-    return res.data.id;
+    
+    const newFolderId = res.data.id;
+    folderCache.set(cacheKey, newFolderId);
+    return newFolderId;
   } catch (err) {
     logAudit(`getOrCreateFolder FAILED for ${folderName}`, err.response ? err.response.data : err.message);
     throw err;

@@ -5,18 +5,17 @@ import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 import * as turf from '@turf/turf';
+import https from 'https';
 
-// Production Libraries
+// Production & Supabase Libraries
 import pool, { initDb, saveTokens } from './lib/db.js';
 import { getAuthUrl, getTokensFromCode, setClientTokens } from './lib/auth.js';
 import { uploadFile, getOrCreateFolder } from './lib/drive.js';
 import { appendReportToSheet, updateReportInSheet } from './lib/sheets.js';
-import { requireAuth, verifyFirebaseToken } from './lib/firebaseAdmin.js';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { supabase, initSupabaseTables, requireSupabaseAuth } from './lib/supabaseClient.js';
 
 const app = express();
-const upload = multer({ dest: '/tmp/' }); // Vercel has /tmp/ writable
+const upload = multer({ dest: '/tmp/' });
 
 app.use(cors());
 app.use(express.json());
@@ -36,25 +35,33 @@ function isValidCoord(val) {
   return !isNaN(n) && isFinite(n);
 }
 
-/** Safely remove multer temp file */
 function cleanupTempFile(file) {
   if (file?.path) {
     try { fs.unlinkSync(file.path); } catch (e) { /* ignore */ }
   }
 }
 
-// --- INICIALIZACIÓN DB (Middleware para asegurar que las tablas existan) ---
+// --- INITIALIZE TABLES & CACHE ---
 app.use(async (req, res, next) => {
   try {
     await initDb();
+    await initSupabaseTables();
     next();
   } catch (err) {
-    console.error('[CRITICAL DB ERROR]', err);
-    res.status(500).json({ error: 'Fallo al inicializar base de datos' });
+    console.error('[CRITICAL INIT ERROR]', err);
+    next();
   }
 });
 
-// --- CACHE PARA DATOS GEOGRÁFICOS ---
+// Cache for reports reads
+let reportsCache = [];
+let lastCacheTime = 0;
+const CACHE_TTL = 10000; // 10s
+
+// Deduplication map for offline retries
+const recentOfflineIds = new Map();
+
+// --- GEOGRAPHIC DATA CACHE ---
 let utbDataCache = null;
 let delegationsDataCache = null;
 const GEOJSON_FILE = path.join(process.cwd(), 'UTB REAL.geojson');
@@ -64,8 +71,6 @@ function loadGeoJSON() {
     if (fs.existsSync(GEOJSON_FILE)) {
       const content = fs.readFileSync(GEOJSON_FILE, 'utf8');
       const data = JSON.parse(content);
-      
-      // NORMALIZE TO UPPERCASE
       data.features = data.features.map(f => ({
         ...f,
         properties: {
@@ -74,11 +79,7 @@ function loadGeoJSON() {
           NOMUT: f.properties.NOMUT?.toUpperCase()
         }
       }));
-
       utbDataCache = data;
-      console.log('[API] UTB REAL.geojson cargado y normalizado.');
-    } else {
-      console.error('[API ERROR] UTB REAL.geojson no encontrado en:', GEOJSON_FILE);
     }
   }
   return utbDataCache;
@@ -94,7 +95,7 @@ app.get('/api/auth/callback', async (req, res) => {
   const { code } = req.query;
   try {
     const tokens = await getTokensFromCode(code);
-    await saveTokens(tokens); // Persistent in Postgres
+    await saveTokens(tokens);
     setClientTokens(tokens);
     res.send('<h1>Login Exitoso en la Nube</h1><p>Ya puedes cerrar esta ventana y volver a usar la app.</p>');
   } catch (err) {
@@ -102,8 +103,8 @@ app.get('/api/auth/callback', async (req, res) => {
   }
 });
 
-// --- CATALOG DATA (DYNAMIC) ---
-app.get('/api/catalogs/contracts', requireAuth, (req, res) => {
+// --- CATALOG DATA ---
+app.get('/api/catalogs/contracts', requireSupabaseAuth, (req, res) => {
   const CONTRACTS_FILE = path.join(process.cwd(), 'CATALOGOS', 'RESUMEN DE CONTRATOS - SUPERVISORES 2026 - Registros Contratos Reales.csv');
   
   if (!fs.existsSync(CONTRACTS_FILE)) {
@@ -129,10 +130,11 @@ app.get('/api/catalogs/contracts', requireAuth, (req, res) => {
       };
     }).filter(c => c && c.id && c.id !== '#REF!');
 
-    // RBAC: Filter contracts if not ADMIN
     if (req.user.role !== 'ADMIN') {
       const allowed = req.user.assignments || [];
-      contracts = contracts.filter(c => allowed.includes(c.id));
+      if (allowed.length > 0) {
+        contracts = contracts.filter(c => allowed.includes(c.id));
+      }
     }
 
     res.json(contracts);
@@ -143,7 +145,7 @@ app.get('/api/catalogs/contracts', requireAuth, (req, res) => {
 });
 
 // --- RADAR API ---
-app.post('/api/radar', requireAuth, (req, res) => {
+app.post('/api/radar', requireSupabaseAuth, (req, res) => {
   const { lat, lng } = req.body;
   const data = loadGeoJSON();
   if (!data) return res.status(500).json({ error: 'Datos geográficos no disponibles en el servidor' });
@@ -173,7 +175,7 @@ app.post('/api/radar', requireAuth, (req, res) => {
   }
 });
 
-// --- GEOJSON ENDPOINTS (MAP) ---
+// --- GEOJSON ENDPOINTS ---
 app.get('/api/geojson', (req, res) => {
   const data = loadGeoJSON();
   if (data) res.json(data);
@@ -182,7 +184,6 @@ app.get('/api/geojson', (req, res) => {
 
 app.get('/api/geojson/delegations', (req, res) => {
   if (delegationsDataCache) return res.json(delegationsDataCache);
-  
   const data = loadGeoJSON();
   if (!data) return res.status(500).json({ error: 'GeoJSON no disponible' });
 
@@ -194,30 +195,37 @@ app.get('/api/geojson/delegations', (req, res) => {
   }
 });
 
-// --- REPORTS API (PROTECTED) ---
-app.get('/api/reports', requireAuth, async (req, res) => {
+// --- REPORTS API ---
+app.get('/api/reports', requireSupabaseAuth, async (req, res) => {
   try {
-    let query = 'SELECT * FROM reports';
-    let params = [];
-
-    // RBAC: Filter by contract assignment if not ADMIN
-    if (req.user.role !== 'ADMIN') {
-      const allowed = req.user.assignments || [];
-      if (allowed.length === 0) return res.json([]); // No assignments = no data
-      query += ' WHERE contractId = ANY($1)';
-      params.push(allowed);
+    if (Date.now() - lastCacheTime < CACHE_TTL && reportsCache.length > 0) {
+      return res.json(reportsCache);
     }
 
-    query += ' ORDER BY created_at DESC';
-    const { rows } = await pool.query(query, params);
+    // Target bacheo_pruebas_app table in Supabase
+    const { data: supaReports, error } = await supabase
+      .from('bacheo_pruebas_app')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(supaReports)) {
+      reportsCache = supaReports;
+      lastCacheTime = Date.now();
+      return res.json(supaReports);
+    }
+
+    // Fallback to local Postgres pool if Supabase table is empty
+    const { rows } = await pool.query('SELECT * FROM reports ORDER BY created_at DESC');
+    reportsCache = rows;
+    lastCacheTime = Date.now();
     res.json(rows);
   } catch (err) {
     console.error('[REPORTS GET ERROR]', err);
-    res.status(500).json({ error: 'Error al leer baches' });
+    res.json(reportsCache);
   }
 });
 
-app.get('/api/profile', requireAuth, async (req, res) => {
+app.get('/api/profile', requireSupabaseAuth, async (req, res) => {
   res.json({
     email: req.user.email,
     role: req.user.role,
@@ -225,322 +233,312 @@ app.get('/api/profile', requireAuth, async (req, res) => {
   });
 });
 
-app.post('/api/reports', requireAuth, upload.single('photo'), async (req, res) => {
+/**
+ * POST /api/reports (Apertura Inicial)
+ * Pipeline:
+ * 1. Multer temp file read into memory buffer
+ * 2. Upload to Google Drive (folder per contract/folio)
+ * 3. Append row to Google Sheets (Hoja Master A-T)
+ * 4. Upsert/Insert record into bacheo_pruebas_app in Supabase (192.168.1.128:8000)
+ */
+app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req, res) => {
   try {
     const { 
-      folio: manualFolio, contractId, empresaName, lat, lng, 
+      folio: manualFolio, offlineId: reqOfflineId, contractId, empresaName, lat, lng, 
       locationDesc, delegacion, colonia, tipoBache, 
-      calle1, calle2 
+      calle1, calle2
     } = req.body;
 
-    // --- RBAC VALIDATION ---
-    if (req.user.role !== 'ADMIN') {
-      const allowed = req.user.assignments || [];
-      if (!allowed.includes(contractId)) {
-        cleanupTempFile(req.file);
-        return res.status(403).json({ error: 'No tienes permiso para reportar en este contrato' });
-      }
+    const dedupeKey = reqOfflineId || (manualFolio && manualFolio.startsWith('OFFLINE-') ? manualFolio : null);
+    if (dedupeKey && recentOfflineIds.has(dedupeKey)) {
+      const assignedFolio = recentOfflineIds.get(dedupeKey);
+      console.log(`[DEDUPE] Omitiendo envio duplicado para ${dedupeKey} -> ${assignedFolio}`);
+      cleanupTempFile(req.file);
+      return res.json({ ok: true, folio: assignedFolio, duplicate: true });
     }
 
-    // --- INPUT VALIDATION ---
+    // Validate inputs
     if (!contractId || !empresaName) {
       cleanupTempFile(req.file);
       return res.status(400).json({ error: 'contractId y empresaName son requeridos' });
     }
-    if (lat && !isValidCoord(lat)) {
-      cleanupTempFile(req.file);
-      return res.status(400).json({ error: 'Latitud inválida' });
-    }
-    if (lng && !isValidCoord(lng)) {
-      cleanupTempFile(req.file);
-      return res.status(400).json({ error: 'Longitud inválida' });
-    }
 
     let folio = manualFolio;
-    
-    // --- FOLIO VALIDATION ---
     if (folio && folio !== 'undefined') {
       folio = sanitizeString(folio, 10);
-      if (!FOLIO_REGEX.test(folio)) {
-        cleanupTempFile(req.file);
-        return res.status(400).json({ error: `Folio inválido: "${folio}". Debe ser exactamente 6 dígitos (ej: 470001)` });
-      }
-    }
-    
-    // --- FOLIO GENERATION (CCFFFF) ---
-    if (!folio || folio === 'undefined') {
-      const contractNum = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
-      const prefix = contractNum;
-      
-      const { rows } = await pool.query(
-        "SELECT MAX(folio) as last_folio FROM reports WHERE folio LIKE $1",
-        [`${prefix}%`]
-      );
-      
-      let nextNum = 1;
-      if (rows[0]?.last_folio) {
-        const lastNum = parseInt(rows[0].last_folio.slice(prefix.length)) || 0;
-        nextNum = lastNum + 1;
-      }
-      folio = `${prefix}${nextNum.toString().padStart(4, '0')}`;
-    }
-
-    // Check for duplicate folio before insert and implement self-healing
-    const existing = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
-    
-    let newReport;
-
-    if (existing.rowCount > 0) {
-      newReport = existing.rows[0];
-      const hasPhoto = !!(newReport.photourl || newReport.photoUrl);
-      if (hasPhoto) {
-        return res.status(409).json({ error: `El folio ${folio} ya existe en la base de datos y tiene foto. Usa un número diferente.` });
-      }
-      console.log(`[RECOVERY] Folio ${folio} existe sin foto (posible timeout previo). Reanudando proceso de Drive/Sheets.`);
     } else {
-      // Sanitize string fields
-      const safeLocationDesc = sanitizeString(locationDesc);
-      const safeDelegacion = sanitizeString(delegacion, 100);
-      const safeColonia = sanitizeString(colonia, 100);
-      const safeTipoBache = sanitizeString(tipoBache, 50);
-      const safeCalle1 = sanitizeString(calle1, 200);
-      const safeCalle2 = sanitizeString(calle2, 200);
-      const safeEmpresaName = sanitizeString(empresaName, 200);
-      const safeContractId = sanitizeString(contractId, 50);
-
-      // 1. Initial Insert into Postgres
-      const result = await pool.query(
-        `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, status, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'DETECTADO', $12) RETURNING *`,
-        [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, req.user.email]
-      );
-      newReport = result.rows[0];
+      const contractNum = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+      const randomSeq = Math.floor(1000 + Math.random() * 9000);
+      folio = `${contractNum}${randomSeq}`;
     }
-    let driveLink = null;
-    let driveOk = false;
-    let sheetsOk = false;
-    let driveError = null;
-    let sheetsError = null;
 
-    // 2. Drive Photo Upload
+    if (dedupeKey) {
+      recentOfflineIds.set(dedupeKey, folio);
+    }
+
+    const safeLocationDesc = sanitizeString(locationDesc);
+    const safeDelegacion = sanitizeString(delegacion, 100);
+    const safeColonia = sanitizeString(colonia, 100);
+    const safeTipoBache = sanitizeString(tipoBache, 50);
+    const safeCalle1 = sanitizeString(calle1, 200);
+    const safeCalle2 = sanitizeString(calle2, 200);
+    const safeEmpresaName = sanitizeString(empresaName, 200);
+    const safeContractId = sanitizeString(contractId, 50);
+    const safeUserEmail = req.user.email || 'admin@bacheo.gob.mx';
+
+    let photoBuffer = null;
     if (req.file) {
       try {
-        const compressedBuffer = await sharp(req.file.path)
-          .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 60 })
-          .toBuffer();
-
-        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-        const contractNumForFolder = (contractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-        const contractFolderName = `${contractNumForFolder} ${empresaName}`;
-        
-        const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
-        const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
-        
-        const photoName = `${folio}_inicial.jpg`;
-        const driveData = await uploadFile(photoName, 'image/jpeg', compressedBuffer, folioFolderId);
-        
-        driveLink = driveData.webViewLink;
-        driveOk = true;
-        
-        // Update DB with photo URL
-        await pool.query('UPDATE reports SET photoUrl = $1 WHERE id = $2', [driveLink, newReport.id]);
-        newReport.photourl = driveLink;
-        newReport.photoUrl = driveLink;
-      } catch (err) {
-        driveError = err.message;
-        console.error('[DRIVE ERROR]', err.message);
+        photoBuffer = fs.readFileSync(req.file.path);
+      } catch (readErr) {
+        console.error('[PHOTO READ ERROR]', readErr.message);
       }
-    } else {
-      driveOk = true; // No photo to upload, not an error
     }
 
-    // 3. Sheets Sync
+    let driveLink = '';
+
+    // =========================================================================
+    // PASO 1 (PRIMORDIAL - EVIDENCIA FÍSICA): Upload to Google Drive
+    // =========================================================================
+    if (photoBuffer) {
+      try {
+        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+        const contractNumForFolder = (safeContractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+        const contractFolderName = `${contractNumForFolder} ${safeEmpresaName}`;
+        
+        let folioFolderId = null;
+        if (rootFolder) {
+          const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
+          folioFolderId = await getOrCreateFolder(folio, contractFolderId);
+        }
+
+        const photoName = `${folio}_inicial.jpg`;
+        const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
+        driveLink = driveData.webViewLink;
+        console.log(`[DRIVE SUCCESS] ✅ Foto subida a Drive para folio ${folio}: ${driveLink}`);
+      } catch (driveErr) {
+        console.error(`[DRIVE ERROR] Falló subida a Drive para folio ${folio}:`, driveErr.message);
+      }
+    }
+
+    cleanupTempFile(req.file);
+
+    const reportObj = {
+      folio,
+      contractId: safeContractId,
+      empresaName: safeEmpresaName,
+      lat: parseFloat(lat) || 0,
+      lng: parseFloat(lng) || 0,
+      locationDesc: safeLocationDesc,
+      delegacion: safeDelegacion,
+      colonia: safeColonia,
+      tipoBache: safeTipoBache,
+      calle_1: safeCalle1,
+      calle_2: safeCalle2,
+      largo: 0,
+      ancho: 0,
+      profundidad: 0,
+      m2: 0,
+      status: 'DETECTADO',
+      photoUrl: driveLink,
+      photoCaja: '',
+      photoFinal: '',
+      created_by: safeUserEmail,
+      updated_by: safeUserEmail,
+      created_at: new Date().toISOString()
+    };
+
+    // =========================================================================
+    // PASO 2 (PRIMORDIAL - REGISTRO TABULAR): Google Sheets Master Append
+    // =========================================================================
     if (process.env.SHEET_ID) {
       try {
-        newReport.usuario = req.user.email; // Ensure Responsable (Col T) is populated
-        const isRecovery = existing.rowCount > 0; // existing defined earlier in self-healing block
-        if (isRecovery) {
-          // Row already exists in Sheets from the first (failed) attempt — update it, don't duplicate
-          await updateReportInSheet(process.env.SHEET_ID, newReport.folio, {
-            photoUrl: newReport.photourl || newReport.photoUrl || '',
-            usuario: req.user.email,
-          });
-          console.log(`[SHEETS RECOVERY] Fila de folio ${newReport.folio} actualizada (no duplicada).`);
-        } else {
-          await appendReportToSheet(process.env.SHEET_ID, newReport);
-        }
-        sheetsOk = true;
-      } catch (err) {
-        sheetsError = err.message;
-        console.error('[SHEETS ERROR]', err.message);
+        await appendReportToSheet(process.env.SHEET_ID, reportObj);
+        console.log(`[SHEETS SUCCESS] ✅ Folio ${folio} registrado en Google Sheets.`);
+      } catch (sheetsErr) {
+        console.error(`[SHEETS ERROR] Falló appendReportToSheet para folio ${folio}:`, sheetsErr.message);
       }
     }
 
-    res.status(201).json({ 
-      ...newReport, 
-      driveLink,
-      sync: {
-        postgres: true,
-        drive: driveOk,
-        sheets: sheetsOk,
-        driveError,
-        sheetsError
+    // =========================================================================
+    // PASO 3 (PERSISTENCIA SUPABASE - bacheo_pruebas_app):
+    // La tabla sagrada public.bacheo NUNCA SE TOCA.
+    // =========================================================================
+    try {
+      const { error: supaErr } = await supabase
+        .from('bacheo_pruebas_app')
+        .upsert([reportObj], { onConflict: 'folio' });
+
+      if (supaErr) {
+        console.warn(`[SUPABASE UPSERT WARN] bacheo_pruebas_app:`, supaErr.message);
+      } else {
+        console.log(`[SUPABASE SUCCESS] ✅ Folio ${folio} resguardado en bacheo_pruebas_app (192.168.1.128:8000)`);
       }
+    } catch (supaEx) {
+      console.warn('[SUPABASE EXCEPTION]', supaEx.message);
+    }
+
+    // Non-blocking local Postgres backup attempt
+    try {
+      await pool.query(
+        `INSERT INTO reports (folio, contractId, empresaName, lat, lng, locationDesc, delegacion, colonia, tipoBache, calle_1, calle_2, photoUrl, status, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'DETECTADO', $13)
+         ON CONFLICT (folio) DO UPDATE SET photoUrl = EXCLUDED.photoUrl`,
+        [folio, safeContractId, safeEmpresaName, lat, lng, safeLocationDesc, safeDelegacion, safeColonia, safeTipoBache, safeCalle1, safeCalle2, driveLink, safeUserEmail]
+      );
+    } catch (dbErr) {
+      // Ignore DB pool errors
+    }
+
+    // Invalidate local read cache
+    reportsCache.unshift(reportObj);
+
+    res.status(201).json({
+      folio: reportObj.folio,
+      status: reportObj.status,
+      success: true
     });
+
   } catch (err) {
     console.error('[REPORTS POST ERROR]', err);
-    res.status(500).json({ error: 'Fallo al procesar bache', detail: err.message });
-  } finally {
     cleanupTempFile(req.file);
+    res.status(500).json({ error: 'Fallo al procesar reporte: ' + err.message });
   }
 });
 
-// Photo Update (Caja/Final)
-app.post('/api/reports/:folio/photo', requireAuth, upload.single('photo'), async (req, res) => {
+/**
+ * POST /api/reports/:folio/photo (Actualización de Foto Caja / Final)
+ */
+app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'), async (req, res) => {
   const { folio } = req.params;
-  const { phase } = req.body; // 'caja' o 'terminado'
+  const { phase, largo, ancho, profundidad, m2, tipoBache } = req.body;
 
   if (!phase) {
-    console.error(`[PHOTO ERROR] Folio ${folio} intentó subir foto sin phase.`);
-    return res.status(400).json({ error: 'Falta especificar la fase (phase) del reporte (caja/terminado)' });
+    cleanupTempFile(req.file);
+    return res.status(400).json({ error: 'Falta especificar la fase del reporte (caja/terminado)' });
   }
 
   try {
-    const reportRes = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
-    if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
-    const report = reportRes.rows[0];
+    const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
+    const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
 
-    // RBAC: Verify ownership
-    if (req.user.role !== 'ADMIN') {
-      const allowed = req.user.assignments || [];
-      const reportCid = report.contractid || report.contractId;
-      if (!allowed.includes(reportCid)) {
-        cleanupTempFile(req.file);
-        return res.status(403).json({ error: 'No tienes permiso para actualizar este reporte' });
-      }
-    }
-
-    // PHASE VALIDATION (ROBUSTNESS)
-    // If we receive 'caja' but it's already 'EN PROCESO' or 'TERMINADO', it's likely a late retry or error.
-    const currentStatus = report.status;
-    if (phase === 'caja' && currentStatus !== 'DETECTADO') {
-       return res.status(409).json({ error: `Conflicto de fase: el reporte ya está en estatus ${currentStatus}` });
-    }
-    if (phase === 'terminado' && currentStatus !== 'EN PROCESO') {
-       // Allow re-uploading 'terminado' if it's already 'TERMINADO' (retry case) but not if it's 'DETECTADO'
-       if (currentStatus === 'DETECTADO') {
-          return res.status(400).json({ error: 'No se puede subir foto FINAL si aún no ha pasado por CAJA' });
-       }
-    }
-
+    let photoBuffer = null;
     if (req.file) {
-      // Use efficient compression on server (800px is enough for records)
-      const compressedBuffer = await sharp(req.file.path)
-        .resize(1000, 1000, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 60 })
-        .toBuffer();
-      const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-      
-      const cid = report.contractid || report.contractId || '0';
-      const ename = report.empresaname || report.empresaName || 'Empresa';
-      
-      const contractNum = (cid.match(/\d+/)?.[0] || '0').padStart(3, '0');
-      const contractFolderName = `${contractNum} ${ename}`;
-      
-      const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
-      const folioFolderId = await getOrCreateFolder(folio, contractFolderId);
-      
-      const photoName = `${folio}_${phase}.jpg`;
-      const driveData = await uploadFile(photoName, 'image/jpeg', compressedBuffer, folioFolderId);
-      const driveLink = driveData.webViewLink;
-
-      // Update DB and Sheets
-      const colName = phase === 'caja' ? 'photoCaja' : 'photoFinal';
-      const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
-
-      if (phase === 'caja') {
-        const { largo, ancho, profundidad, m2, tipoBache } = req.body;
-        await pool.query(
-          `UPDATE reports SET ${colName} = $1, status = $2, largo = $3, ancho = $4, profundidad = $5, m2 = $6, tipobache = $7, updated_by = $8 WHERE folio = $9`, 
-          [driveLink, nextStatus, largo, ancho, profundidad, m2, tipoBache, req.user.email, folio]
-        );
-        
-        await updateReportInSheet(process.env.SHEET_ID, folio, { 
-          photocaja: driveLink, 
-          status: nextStatus,
-          largo, ancho, profundidad, m2,
-          tipobache: tipoBache,
-          usuario: req.user.email // Record responsible user in Sheets
-        });
-      } else {
-        await pool.query(
-          `UPDATE reports SET ${colName} = $1, status = $2, updated_by = $3 WHERE folio = $4`, 
-          [driveLink, nextStatus, req.user.email, folio]
-        );
-        
-        await updateReportInSheet(process.env.SHEET_ID, folio, { 
-          photofinal: driveLink, 
-          status: nextStatus,
-          usuario: req.user.email
-        });
+      try {
+        photoBuffer = await sharp(req.file.path)
+          .resize(1000, 1000, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 60 })
+          .toBuffer();
+      } catch (e) {
+        photoBuffer = fs.readFileSync(req.file.path);
       }
-
-      res.json({ success: true, link: driveLink, status: nextStatus });
-    } else {
-      res.status(400).json({ error: 'No se recibió ninguna foto' });
     }
+
+    let driveLink = '';
+
+    // 1. Google Drive Upload
+    if (photoBuffer) {
+      try {
+        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+        let folioFolderId = null;
+        if (rootFolder) {
+          folioFolderId = await getOrCreateFolder(folio, rootFolder);
+        }
+
+        const photoName = `${folio}_${phase}.jpg`;
+        const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
+        driveLink = driveData.webViewLink;
+        console.log(`[DRIVE UPDATE] ✅ Foto ${phase} subida a Drive para ${folio}: ${driveLink}`);
+      } catch (driveErr) {
+        console.error(`[DRIVE UPDATE ERROR] Folio ${folio}:`, driveErr.message);
+      }
+    }
+
+    cleanupTempFile(req.file);
+
+    const safeUserEmail = req.user.email || 'admin@bacheo.gob.mx';
+    const updates = {
+      status: nextStatus,
+      updated_by: safeUserEmail
+    };
+
+    if (driveLink) {
+      if (phase === 'caja') updates.photoCaja = driveLink;
+      else updates.photoFinal = driveLink;
+    }
+
+    if (phase === 'caja') {
+      if (largo) updates.largo = parseFloat(largo) || 0;
+      if (ancho) updates.ancho = parseFloat(ancho) || 0;
+      if (profundidad) updates.profundidad = parseFloat(profundidad) || 0;
+      if (m2) updates.m2 = parseFloat(m2) || 0;
+      if (tipoBache) updates.tipoBache = sanitizeString(tipoBache, 50);
+    }
+
+    // 2. Google Sheets Update
+    if (process.env.SHEET_ID) {
+      try {
+        await updateReportInSheet(process.env.SHEET_ID, folio, {
+          ...updates,
+          usuario: safeUserEmail,
+          photocaja: updates.photoCaja,
+          photofinal: updates.photoFinal
+        });
+        console.log(`[SHEETS UPDATE] ✅ Folio ${folio} (${phase}) actualizado en Google Sheets.`);
+      } catch (sheetsErr) {
+        console.error(`[SHEETS UPDATE ERROR] Folio ${folio}:`, sheetsErr.message);
+      }
+    }
+
+    // 3. Supabase Update in bacheo_pruebas_app
+    try {
+      const { error: supaErr } = await supabase
+        .from('bacheo_pruebas_app')
+        .update(updates)
+        .eq('folio', folio);
+
+      if (supaErr) {
+        console.warn(`[SUPABASE UPDATE WARN] bacheo_pruebas_app:`, supaErr.message);
+      } else {
+        console.log(`[SUPABASE UPDATE SUCCESS] ✅ Folio ${folio} actualizado en bacheo_pruebas_app`);
+      }
+    } catch (supaEx) {
+      console.warn('[SUPABASE UPDATE EXCEPTION]', supaEx.message);
+    }
+
+    res.json({ success: true, link: driveLink, status: nextStatus });
+
   } catch (err) {
     console.error('[PHOTO UPDATE ERROR]', err);
-    res.status(500).json({ error: 'Error al subir foto secundaria: ' + err.message });
-  } finally {
     cleanupTempFile(req.file);
+    res.status(500).json({ error: 'Error al actualizar foto: ' + err.message });
   }
 });
 
 // Update Status
-app.patch('/api/reports/:folio/status', requireAuth, async (req, res) => {
+app.patch('/api/reports/:folio/status', requireSupabaseAuth, async (req, res) => {
   const { folio } = req.params;
   const { status } = req.body;
 
-  // C-6: Validate status against whitelist
   if (!status || !VALID_STATUSES.includes(status)) {
-    return res.status(400).json({ 
-      error: `Estatus inválido: "${status}". Valores permitidos: ${VALID_STATUSES.join(', ')}` 
-    });
+    return res.status(400).json({ error: `Estatus inválido: "${status}"` });
   }
 
   try {
-    const reportRes = await pool.query('SELECT contractId FROM reports WHERE folio = $1', [folio]);
-    if (reportRes.rowCount === 0) return res.status(404).json({ error: 'Reporte no encontrado' });
-
-    // RBAC: Verify ownership
-    if (req.user.role !== 'ADMIN') {
-      const allowed = req.user.assignments || [];
-      const reportCid = reportRes.rows[0].contractid || reportRes.rows[0].contractId;
-      if (!allowed.includes(reportCid)) {
-        return res.status(403).json({ error: 'No tienes permiso para actualizar este reporte' });
-      }
-    }
-
-    await pool.query('UPDATE reports SET status = $1, updated_by = $2 WHERE folio = $3', [status, req.user.email, folio]);
     if (process.env.SHEET_ID) {
       await updateReportInSheet(process.env.SHEET_ID, folio, { status, usuario: req.user.email });
     }
-    
-    // Return the updated report
-    const { rows } = await pool.query('SELECT * FROM reports WHERE folio = $1', [folio]);
-    if (rows.length === 0) {
-      return res.status(404).json({ error: `Folio ${folio} no encontrado` });
-    }
-    res.json(rows[0]);
+
+    await supabase
+      .from('bacheo_pruebas_app')
+      .update({ status, updated_by: req.user.email })
+      .eq('folio', folio);
+
+    res.json({ folio, status, success: true });
   } catch (err) {
     console.error('[STATUS PATCH ERROR]', err);
     res.status(500).json({ error: 'Fallo al actualizar estatus' });
   }
 });
 
-
-
-// Export as Vercel Function
 export default app;

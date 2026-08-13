@@ -13,7 +13,6 @@ function logSheets(msg, data = null) {
 /**
  * Maps the report object to the exact array structure required by the Google Sheet.
  * Column Order: Folio, Fecha, Contrato, Empresa, Ubicación (Ref), Delegación, Colonia, 
- * Column Order: Folio, Fecha, Contrato, Empresa, Ubicación (Ref), Delegación, Colonia, 
  * Coordenadas (Lat,Lng), Largo (M), Ancho (M), Profundidad (M), M2, Tipo Bache, Estatus, 
  * Foto Inicial (Link), Photo Caja, Photo Final, Calle 1, Calle 2, Responsable (T)
  */
@@ -111,39 +110,46 @@ export async function updateReportInSheet(sheetId, folio, updates) {
 
     const sheetRow = rowIndex + 1;
 
-    // Columna N: status, P: photoCaja, Q: photoFinal, M: tipoBache, I-L: measurements, T: Responsable
+    // Columna N: status, O: photoUrl, P: photoCaja, Q: photoFinal, M: tipoBache, I-L: measurements, T: Responsable
     const { largo, ancho, profundidad, m2, status, usuario } = updates;
+    const photoUrl = updates.photoUrl || updates.photourl;
     const photoCaja = updates.photocaja || updates.photoCaja;
     const photoFinal = updates.photofinal || updates.photoFinal;
     // Normalize and strip 'CAJA ' from tipoBache
     const rawTipo = updates.tipobache || updates.tipoBache || '';
     const tipoBache = rawTipo.replace(/^CAJA\s+/i, '').trim() || null;
 
-    const batchUpdates = [];
+    const batchData = [];
 
     if (measurementsExist(largo, ancho, profundidad)) {
-      batchUpdates.push({
+      batchData.push({
         range: `Hoja 1!I${sheetRow}:L${sheetRow}`,
         values: [[largo, ancho, profundidad, m2]]
       });
     }
 
-    if (photoCaja) batchUpdates.push({ range: `Hoja 1!P${sheetRow}`, values: [[photoCaja]] });
-    if (photoFinal) batchUpdates.push({ range: `Hoja 1!Q${sheetRow}`, values: [[photoFinal]] });
-    if (status) batchUpdates.push({ range: `Hoja 1!N${sheetRow}`, values: [[status]] });
-    if (tipoBache) batchUpdates.push({ range: `Hoja 1!M${sheetRow}`, values: [[tipoBache]] });
-    if (usuario) batchUpdates.push({ range: `Hoja 1!T${sheetRow}`, values: [[usuario]] });
+    if (photoUrl) batchData.push({ range: `Hoja 1!O${sheetRow}`, values: [[photoUrl]] });
+    if (photoCaja) batchData.push({ range: `Hoja 1!P${sheetRow}`, values: [[photoCaja]] });
+    if (photoFinal) batchData.push({ range: `Hoja 1!Q${sheetRow}`, values: [[photoFinal]] });
+    if (status) batchData.push({ range: `Hoja 1!N${sheetRow}`, values: [[status]] });
+    if (tipoBache) batchData.push({ range: `Hoja 1!M${sheetRow}`, values: [[tipoBache]] });
+    if (usuario) batchData.push({ range: `Hoja 1!T${sheetRow}`, values: [[usuario]] });
 
-    for (const update of batchUpdates) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
-        range: update.range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: update.values },
-      });
+    if (batchData.length === 0) {
+      logSheets(`No updates to apply for ${folio}`);
+      return;
     }
+
+    // OPTIMIZATION: Single batchUpdate call instead of N individual update calls
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: batchData,
+      },
+    });
     
-    logSheets(`Update SUCCESS for ${folio}`);
+    logSheets(`Update SUCCESS for ${folio} (${batchData.length} ranges in 1 batch call)`);
   } catch (err) {
     const errorData = err.response ? err.response.data : err.message;
     console.error('[SHEETS ERROR] updateReportInSheet failed:', errorData);

@@ -45,8 +45,8 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/geojson/delegations').then(res => res.json()).then(data => { setDelegations(data); setLoading(false); }).catch(() => setLoading(false))
-    fetch('/api/geojson').then(res => res.json()).then(data => setUtbs(data))
+    apiFetch('/api/geojson/delegations').then(res => res.json()).then(data => { setDelegations(data); setLoading(false); }).catch(() => setLoading(false))
+    apiFetch('/api/geojson').then(res => res.json()).then(data => setUtbs(data))
     apiFetch('/api/reports').then(res => res.json()).then(data => setReports(Array.isArray(data) ? data : []))
   }, [])
 

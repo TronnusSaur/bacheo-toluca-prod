@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone } from 'lucide-react'
-import { savePendingReport, countPendingReports } from '../lib/offlineStore'
+import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone, Loader } from 'lucide-react'
+import { saveReportJSON, saveReportPhoto, addPendingItem, getPendingItems } from '../lib/robustStore'
 import { apiFetch } from '../lib/apiFetch'
+import { compressImage } from '../lib/imageUtils'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
 
@@ -15,6 +16,8 @@ interface Contract {
   residente_tel: string;
   delegacion: string;
 }
+
+type UploadStage = 'idle' | 'compressing' | 'sending' | 'saving-offline' | 'done';
 
 export default function FormScreen({ userProfile }: { userProfile: any }) {
   const [contracts, setContracts] = useState<Contract[]>([])
@@ -32,11 +35,16 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
   })
   
   const [isUploading, setIsUploading] = useState(false)
+  const [uploadStage, setUploadStage] = useState<UploadStage>('idle')
   const [offlineCount, setOfflineCount] = useState(0)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [hasPhoto, setHasPhoto] = useState(false)
   const [folioSuffix, setFolioSuffix] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // OPTIMIZATION: Pre-compressed photo buffer, ready to submit instantly
+  const compressedPhotoRef = useRef<ArrayBuffer | null>(null)
+  const compressedBlobRef = useRef<Blob | null>(null)
 
   const getContractPrefix = (contractId: string) => {
     const num = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
@@ -44,9 +52,9 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
   }
 
   const updateOfflineCount = async () => {
-    const count = await countPendingReports()
-    setOfflineCount(count)
-    console.log('[DEBUG] Reportes offline:', count)
+    const list = await getPendingItems()
+    setOfflineCount(list.length)
+    console.log('[DEBUG] Reportes offline:', list.length)
   }
 
   useEffect(() => {
@@ -123,35 +131,56 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     )
   }
 
+  /**
+   * OPTIMIZATION: Compress the photo immediately when the user selects it (onChange),
+   * NOT when they press "Guardar". This eliminates 1–3 seconds of delay at submit time.
+   */
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) {
+      setHasPhoto(false)
+      compressedPhotoRef.current = null
+      compressedBlobRef.current = null
+      return
+    }
+
+    setHasPhoto(true)
+    
+    // Compress in background while user fills out the rest of the form
+    try {
+      const compressed = await compressImage(file)
+      compressedBlobRef.current = compressed
+      compressedPhotoRef.current = await compressed.arrayBuffer()
+      console.log('[COMPRESS] Foto pre-comprimida OK:', compressedPhotoRef.current.byteLength, 'bytes')
+    } catch (compressErr) {
+      console.warn('[COMPRESS] Falló la compresión. Usando buffer crudo como fallback:', compressErr)
+      try {
+        compressedBlobRef.current = file
+        compressedPhotoRef.current = await file.arrayBuffer()
+        console.log('[COMPRESS] Buffer crudo rescatado:', compressedPhotoRef.current.byteLength, 'bytes')
+      } catch (rawErr) {
+        console.error('[COMPRESS] No se pudo leer ni el buffer crudo:', rawErr)
+        compressedPhotoRef.current = null
+        compressedBlobRef.current = null
+      }
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!hasPhoto || !selectedContract) return
     
     setIsUploading(true)
+    setUploadStage('compressing')
     
     const prefix = getContractPrefix(selectedContract.id);
     const folio = `${prefix}${folioSuffix}`;
 
-    // --- Capture photo ONCE here, before any network attempt ---
-    // This avoids stale fileInputRef after FormData consumes the file
-    const photoFile = fileInputRef.current?.files?.[0];
-    let photoBuffer: ArrayBuffer | null = null;
-    if (photoFile) {
-      try {
-        const compressed = await compressImage(photoFile);
-        photoBuffer = await compressed.arrayBuffer();
-        console.log('[COMPRESS] Foto inicial comprimida OK:', photoBuffer.byteLength, 'bytes');
-      } catch (compressErr) {
-        console.warn('[COMPRESS] Falló la compresión (RAM bajo?). Usando buffer crudo como fallback:', compressErr);
-        // RESCUE: read the raw file bytes into memory so offline sync can still upload the photo
-        try {
-          photoBuffer = await photoFile.arrayBuffer();
-          console.log('[COMPRESS] Buffer crudo rescatado:', photoBuffer.byteLength, 'bytes');
-        } catch (rawErr) {
-          console.error('[COMPRESS] No se pudo leer ni el buffer crudo. La foto no se guardará offline.', rawErr);
-        }
-      }
-    }
+    // Photo buffer is ALREADY compressed since onChange — zero delay here
+    const photoBuffer = compressedPhotoRef.current;
+
+    // Move to "sending" stage immediately (compression was already done)
+    setUploadStage('sending')
 
     const submission = new FormData();
     submission.append('folio', folio);
@@ -169,36 +198,49 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       submission.append('tipoBache', formData.tipoBache);
     }
 
-    // For the online attempt, send the already COMPRESSED buffer to prevent Vercel chunks/timeouts
+    // Attach the pre-compressed buffer
     if (photoBuffer) {
       submission.append('photo', new Blob([photoBuffer], { type: 'image/jpeg' }), 'inicial.jpg');
-    } else if (photoFile) {
-      // Fallback if compression somehow failed but file exists
-      submission.append('photo', photoFile, 'inicial.jpg');
     }
 
     try {
+      // OPTIMIZATION: 25-second timeout to prevent indefinite hangs.
+      // If the server doesn't respond in time, save offline automatically.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
       const response = await apiFetch('/api/reports', {
         method: 'POST',
-        body: submission
+        body: submission,
+        signal: controller.signal,
       })
 
+      clearTimeout(timeoutId);
+
       if (response.ok) {
+        setUploadStage('done')
         setShowSuccessModal(true)
         resetForm()
       } else {
-        await saveToOffline(folio, photoBuffer)
+        setUploadStage('saving-offline')
+        await saveToOffline(folio)
       }
-    } catch (err) {
-      await saveToOffline(folio, photoBuffer)
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        console.warn('[TIMEOUT] El servidor no respondió en 25s. Guardando offline...');
+      }
+      setUploadStage('saving-offline')
+      await saveToOffline(folio)
     } finally {
       setIsUploading(false)
+      setUploadStage('idle')
     }
   }
 
-  const saveToOffline = async (folio: string, photoBuffer: ArrayBuffer | null = null) => {
+  const saveToOffline = async (folio: string) => {
     try {
-      await savePendingReport({
+      // 1. Guardar la info como archivo JSON de metadatos
+      await saveReportJSON(folio, 'inicial', {
         type: 'APERTURA',
         phase: 'inicial',
         fields: {
@@ -215,11 +257,18 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
           colonia: formData.colonia,
           tipoBache: formData.tipoBache
         },
-        photoBuffer,
         savedAt: new Date().toISOString()
-      })
+      });
+
+      // 2. Guardar la foto físicamente si existe
+      if (compressedBlobRef.current) {
+        await saveReportPhoto(folio, 'inicial', compressedBlobRef.current);
+      }
+
+      // 3. Registrar el folio en la cola multiplataforma
+      await addPendingItem(`${folio}_inicial`);
       
-      console.log('[OFFLINE] Reporte guardado localmente ok.');
+      console.log('[OFFLINE] Reporte e imagen guardados localmente ok.');
       setShowSuccessModal(true);
       resetForm();
       updateOfflineCount();
@@ -229,13 +278,11 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     }
   }
 
-  const setPhotoState = (val: any) => {
-    setHasPhoto(!!val)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
   const resetForm = () => {
-    setPhotoState(null)
+    setHasPhoto(false)
+    compressedPhotoRef.current = null
+    compressedBlobRef.current = null
+    if (fileInputRef.current) fileInputRef.current.value = ''
     setFormData(prev => ({ 
       ...prev, 
       locationDesc: '', 
@@ -249,13 +296,24 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     setFolioSuffix('')
   }
 
+  /** Human-readable stage labels for the progress indicator */
+  const getStageLabel = (): string => {
+    switch (uploadStage) {
+      case 'compressing': return '📸 Preparando imagen...';
+      case 'sending': return '📡 Enviando al servidor...';
+      case 'saving-offline': return '💾 Guardando localmente...';
+      case 'done': return '✅ ¡Reporte guardado!';
+      default: return 'GUARDAR REPORTE';
+    }
+  }
+
   return (
     <div className="form-container animate-in">
       <div className="form-header">
         <div className="form-header-row">
           <h1 className="text-2xl font-black">Apertura Técnica</h1>
           <button type="button" onClick={requestLocation} className="btn-radar">
-             <MapPin size={16} /> {isUploading ? '...' : 'OBTENER UBICACIÓN'}
+             <MapPin size={16} /> {isUploading && uploadStage === 'idle' ? '...' : 'OBTENER UBICACIÓN'}
           </button>
         </div>
         <p className="test-badge inline-block mb-4">⚠️ DATOS REALES (CATÁLOGO)</p>
@@ -379,10 +437,10 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
               accept="image/*" 
               capture="environment" 
               style={{ display: 'none' }} 
-              onChange={(e) => setHasPhoto(!!e.target.files?.[0])}
+              onChange={handlePhotoChange}
             />
             <Camera size={20} />
-            {hasPhoto ? 'FOTO LISTA' : 'TOMAR FOTO INICIAL*'}
+            {hasPhoto ? 'FOTO LISTA ✓' : 'TOMAR FOTO INICIAL*'}
           </label>
 
           <button 
@@ -394,7 +452,12 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
               cursor: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 'pointer' : 'not-allowed'
             }}
           >
-            {isUploading ? 'SUBIENDO...' : 'GUARDAR REPORTE'}
+            {isUploading ? (
+              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                <Loader size={16} className="spin-icon" />
+                {getStageLabel()}
+              </span>
+            ) : 'GUARDAR REPORTE'}
           </button>
         </div>
       </form>

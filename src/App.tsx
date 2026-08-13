@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { LayoutGrid, Plus, LayoutList, Map as MapIcon, WifiOff, LogOut } from 'lucide-react'
 import { registerAutoSync } from './lib/syncService'
-import { countPendingReports } from './lib/offlineStore'
-import { onAuthChange, signOut } from './lib/firebase'
-import type { User } from 'firebase/auth'
+import { getPendingItems } from './lib/robustStore'
+import { onAuthChange, signOut } from './lib/supabase'
+import type { User } from '@supabase/supabase-js'
 import MetricsScreen from './screens/MetricsScreen'
 import FormScreen from './screens/FormScreen'
 import LogScreen from './screens/LogScreen'
@@ -19,11 +19,11 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<{role: string, assignments: string[]} | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
 
-  // Listen to Firebase auth state (auto-restores from cache, works offline)
+  // Listen to Supabase auth state (auto-restores from session cache, works offline)
   useEffect(() => {
-    const unsubscribe = onAuthChange((firebaseUser) => {
-      setUser(firebaseUser)
-      if (!firebaseUser) {
+    const unsubscribe = onAuthChange((supaUser) => {
+      setUser(supaUser)
+      if (!supaUser) {
         setUserProfile(null)
       }
       setAuthLoading(false)
@@ -31,13 +31,12 @@ export default function App() {
     return () => unsubscribe()
   }, [])
 
-  // Initialize sync & pending count only when authenticated
+  // Initialize sync & pending count when authenticated
   useEffect(() => {
     if (!user) return
 
     async function initApp() {
       try {
-        // Fetch extended profile (role/assignments)
         import('./lib/apiFetch').then(({ apiFetch }) => {
           apiFetch('/api/profile')
             .then(res => res.json())
@@ -49,13 +48,11 @@ export default function App() {
             .catch(e => console.warn('[PROFILE] Error fetching profile:', e));
         });
 
-        registerAutoSync(({ synced }) => {
-          if (synced > 0) {
-            countPendingReports().then(setPendingCount).catch(() => {});
-          }
+        registerAutoSync(() => {
+          getPendingItems().then(items => setPendingCount(items.length)).catch(() => {});
         });
-        const count = await countPendingReports();
-        setPendingCount(count);
+        const items = await getPendingItems();
+        setPendingCount(items.length);
       } catch (e) {
         console.error('Error durante la inicialización del app:', e);
       }
@@ -72,7 +69,6 @@ export default function App() {
     }
   }
 
-  // Show loading spinner while Firebase checks cached session
   if (authLoading) {
     return (
       <div style={{ 
@@ -84,16 +80,15 @@ export default function App() {
         color: '#64748b',
         fontFamily: 'var(--font-family)',
         fontSize: '0.7rem',
-        fontWeight: 900,
+        fontWeight: 950,
         letterSpacing: '0.2em',
         textTransform: 'uppercase'
       }}>
-        CARGANDO SISTEMA...
+        CARGANDO SISTEMA DE BACHEO...
       </div>
     )
   }
 
-  // Show login screen if not authenticated
   if (!user) {
     return <LoginScreen onLoginSuccess={() => {}} />
   }

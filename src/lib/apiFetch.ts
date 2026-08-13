@@ -1,16 +1,11 @@
 /**
  * apiFetch.ts
- * Wrapper para fetch que automáticamente adjunta el Firebase ID Token.
- * Si no hay token (no autenticado o offline), la petición se hace sin él.
- * 
- * Uso:
- *   import { apiFetch } from '../lib/apiFetch';
- *   const data = await apiFetch('/api/reports');
- *   // POST con body:
- *   await apiFetch('/api/reports', { method: 'POST', body: formData });
+ * Wrapper para fetch que automáticamente adjunta el Supabase ID/Session Token.
  */
 
-import { getIdToken } from './firebase';
+import { getIdToken } from './supabase';
+
+const VERCEL_API_BASE = 'https://bacheo-toluca-prod.vercel.app';
 
 export async function apiFetch(
   url: string, 
@@ -24,12 +19,22 @@ export async function apiFetch(
     headers.set('Authorization', `Bearer ${token}`);
   }
   
-  // Auto-add Content-Type for JSON string bodies if not explicitly set
+  // Auto-add Content-Type for JSON string bodies if not set
   if (typeof options.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   
-  return fetch(url, {
+  // Resolve absolute URL: relative URLs go to window.location.origin in browser or Vercel base in native
+  let absoluteUrl = url;
+  if (url.startsWith('/')) {
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && !window.location.hostname.includes('127.0.0.1')) {
+      absoluteUrl = url;
+    } else {
+      absoluteUrl = `${VERCEL_API_BASE}${url}`;
+    }
+  }
+  
+  return fetch(absoluteUrl, {
     ...options,
     headers,
   });

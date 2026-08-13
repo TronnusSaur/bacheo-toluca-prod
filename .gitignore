@@ -26,3 +26,6 @@ uploads/
 simulation_reports.json
 OUTPUTS SUBIDA DATOS/
 scratch/
+
+.vercel
+.env*.local

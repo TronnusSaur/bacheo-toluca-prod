@@ -3,8 +3,18 @@
  * Utilidades para procesamiento de imágenes en el cliente.
  */
 
+export interface CompressOptions {
+  maxWidth?: number;
+  quality?: number;
+}
+
 /** Comprime una imagen usando Canvas para reducir su resolución y calidad */
-export const compressImage = (file: File): Promise<Blob> => {
+export const compressImage = (
+  file: File, 
+  options: CompressOptions = {}
+): Promise<Blob> => {
+  const { maxWidth = 800, quality = 0.6 } = options;
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -13,13 +23,12 @@ export const compressImage = (file: File): Promise<Blob> => {
       img.src = event.target?.result as string;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // Resolución optimizada para reporte visual
         let width = img.width;
         let height = img.height;
         
-        if (width > MAX_WIDTH) {
-          height *= MAX_WIDTH / width;
-          width = MAX_WIDTH;
+        if (width > maxWidth) {
+          height *= maxWidth / width;
+          width = maxWidth;
         }
         
         canvas.width = width;
@@ -27,11 +36,10 @@ export const compressImage = (file: File): Promise<Blob> => {
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
         
-        // Calidad 0.6 es suficiente para auditoría fotográfica
         canvas.toBlob((blob) => {
           if (blob) resolve(blob);
           else reject(new Error('Canvas toBlob failed'));
-        }, 'image/jpeg', 0.6);
+        }, 'image/jpeg', quality);
       };
       img.onerror = (err) => reject(err);
     };
