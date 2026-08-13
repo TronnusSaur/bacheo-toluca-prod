@@ -17,6 +17,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   }
 });
 
+const DEMO_SESSION_KEY = 'bacheo_demo_user_email';
+
 /**
  * Obtiene el JWT access_token de la sesión activa de Supabase.
  */
@@ -40,13 +42,64 @@ export async function signIn(email: string, password: string): Promise<User> {
   });
   if (error) throw error;
   if (!data.user) throw new Error('Usuario no devuelto por Supabase');
+  localStorage.removeItem(DEMO_SESSION_KEY);
   return data.user;
 }
 
 /**
- * Cerrar sesión en Supabase.
+ * Registrar un nuevo usuario en Supabase Auth.
+ */
+export async function signUp(email: string, password: string): Promise<User | null> {
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        role: 'ADMIN'
+      }
+    }
+  });
+  if (error) throw error;
+  return data.user;
+}
+
+/**
+ * Habilita sesión de modo de pruebas local sin requerir confirmación por email.
+ */
+export function setDemoSession(email: string): User {
+  const demoEmail = email.trim() || 'juanpablobumblebee@gmail.com';
+  localStorage.setItem(DEMO_SESSION_KEY, demoEmail);
+  const mockUser: any = {
+    id: 'demo-user-' + Date.now(),
+    email: demoEmail,
+    role: 'authenticated',
+    aud: 'authenticated',
+    app_metadata: { provider: 'email' },
+    user_metadata: { role: 'ADMIN', assignments: [] },
+    created_at: new Date().toISOString()
+  };
+  return mockUser;
+}
+
+export function getDemoUser(): User | null {
+  const savedEmail = localStorage.getItem(DEMO_SESSION_KEY);
+  if (!savedEmail) return null;
+  return {
+    id: 'demo-user-session',
+    email: savedEmail,
+    role: 'authenticated',
+    aud: 'authenticated',
+    app_metadata: { provider: 'email' },
+    user_metadata: { role: 'ADMIN', assignments: [] },
+    created_at: new Date().toISOString()
+  } as User;
+}
+
+/**
+ * Cerrar sesión en Supabase y limpiar demo session.
  */
 export async function signOut(): Promise<void> {
+  localStorage.removeItem(DEMO_SESSION_KEY);
   const { error } = await supabase.auth.signOut();
   if (error) console.error('[SUPABASE AUTH] Error al cerrar sesión:', error);
 }
@@ -55,8 +108,18 @@ export async function signOut(): Promise<void> {
  * Suscribirse a cambios en el estado de autenticación.
  */
 export function onAuthChange(callback: (user: User | null, session: Session | null) => void): () => void {
+  const demoUser = getDemoUser();
+  if (demoUser) {
+    callback(demoUser, null);
+  }
+
   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(session?.user || null, session);
+    const activeDemo = getDemoUser();
+    if (activeDemo) {
+      callback(activeDemo, null);
+    } else {
+      callback(session?.user || null, session);
+    }
   });
 
   return () => {
