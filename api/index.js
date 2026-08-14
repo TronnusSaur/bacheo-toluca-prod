@@ -479,7 +479,20 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
         const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
         let folioFolderId = null;
         if (rootFolder) {
-          folioFolderId = await getOrCreateFolder(folio, rootFolder);
+          const normFolio = (f) => String(f || '').trim().replace(/^'/, '').padStart(6, '0');
+          const existingReport = reportsCache.find(r => normFolio(r.folio) === normFolio(folio));
+          
+          const rawContractId = req.body.contractId || existingReport?.contractId || existingReport?.contractid || '';
+          const rawEmpresaName = req.body.empresaName || existingReport?.empresaName || existingReport?.empresaname || '';
+
+          if (rawContractId || rawEmpresaName) {
+            const contractNumForFolder = (rawContractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+            const contractFolderName = `${contractNumForFolder} ${rawEmpresaName}`.trim();
+            const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
+            folioFolderId = await getOrCreateFolder(folio, contractFolderId);
+          } else {
+            folioFolderId = await getOrCreateFolder(folio, rootFolder);
+          }
         }
         const photoName = `${folio}_${phase}.jpg`;
         const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
