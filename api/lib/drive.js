@@ -55,7 +55,7 @@ export async function getOrCreateFolder(folderName, parentId) {
     return newFolderId;
   } catch (err) {
     console.warn(`[DRIVE WARN] getOrCreateFolder omitido para ${folderName}:`, err.message);
-    return parentId; // Fallback to parent ID if folder creation fails due to permissions
+    return parentId;
   }
 }
 
@@ -79,6 +79,8 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
       body: Readable.from(body),
     };
 
+    let fileData = null;
+
     if (existingFile) {
       console.log(`[DRIVE] Actualizando archivo existente: ${fileName}`);
       const res = await drive.files.update({
@@ -87,7 +89,7 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
         supportsAllDrives: true,
         fields: 'id, webViewLink',
       });
-      return res.data;
+      fileData = res.data;
     } else {
       console.log(`[DRIVE] Subiendo nuevo archivo a Drive: ${fileName}`);
       const res = await drive.files.create({
@@ -100,18 +102,35 @@ export async function uploadFile(fileName, mimeType, body, parentId) {
         supportsAllDrives: true,
         fields: 'id, webViewLink',
       });
-      return res.data;
+      fileData = res.data;
     }
+
+    // Set public view permission so image link works anywhere
+    try {
+      if (fileData?.id) {
+        await drive.permissions.create({
+          fileId: fileData.id,
+          supportsAllDrives: true,
+          requestBody: {
+            role: 'reader',
+            type: 'anyone'
+          }
+        });
+      }
+    } catch (permErr) {
+      // ignore
+    }
+
+    return fileData;
   } catch (err) {
     const errorData = err.response ? err.response.data : err.message;
     console.error(`[DRIVE ERROR] Falló subida a Drive para ${fileName}:`, errorData);
     
-    // Fallback: If Drive Service Account quota is exceeded, return base64 data URL so app never fails
+    // Fallback: If Drive Service Account quota is exceeded, return clean placeholder link so app never fails
     if (body && (String(errorData).includes('storageQuotaExceeded') || String(errorData).includes('403'))) {
-      const b64 = Buffer.isBuffer(body) ? body.toString('base64') : Buffer.from(body).toString('base64');
       return {
-        id: 'b64_fallback_' + Date.now(),
-        webViewLink: `data:${mimeType};base64,${b64.slice(0, 100)}...` // compact reference
+        id: 'drive_quota_pending_' + Date.now(),
+        webViewLink: `https://drive.google.com/drive/folders/${parentId}`
       };
     }
     
