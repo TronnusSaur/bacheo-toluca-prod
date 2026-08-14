@@ -36,95 +36,85 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
   const [syncingFolios, setSyncingFolios] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const buildFinalReports = (apiReports: Report[], pending: any[]) => {
+    const pendingAperturas = pending
+      .filter(p => p.type === 'APERTURA')
+      .map(p => ({
+        id: -Math.abs((p.fields?.folio || '').split('').reduce((a: number, b: string) => { const h = (a << 5) - a + b.charCodeAt(0); return h & h; }, 0) || Date.now()),
+        folio: p.fields?.folio || '',
+        contractId: p.fields?.contractId || '',
+        locationDesc: p.fields?.locationDesc || '',
+        delegacion: p.fields?.delegacion || '',
+        colonia: p.fields?.colonia || '',
+        status: 'DETECTADO',
+        created_at: p.savedAt,
+        isOffline: true,
+        serverMissing: p.serverMissing
+      }))
+
+    const filteredPending = userProfile?.role === 'ADMIN'
+      ? pendingAperturas
+      : pendingAperturas.filter(p => userProfile?.assignments?.includes(p.contractId));
+
+    const finalReports = [...apiReports]
+    filteredPending.forEach(pa => {
+      if (!finalReports.find(r => r.folio === pa.folio)) {
+        finalReports.unshift(pa as any)
+      }
+    })
+    finalReports.forEach(r => {
+      const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields?.folio === r.folio)
+      if (relatedUpdates.length > 0) {
+        const hasTerminado = relatedUpdates.some(up => up.phase === 'terminado')
+        r.status = hasTerminado ? 'TERMINADO' : 'EN PROCESO'
+        r.isOffline = true
+      }
+    })
+    return finalReports
+  }
+
+  const loadPendingItems = async () => {
+    const pendingItems = await getPendingItems()
+    const pending: any[] = []
+    for (const itemKey of pendingItems) {
+      const parts = itemKey.split('_')
+      const folio = parts[0]
+      const phase = parts.slice(1).join('_')
+      const reportData = await getReportJSON(folio, phase)
+      if (reportData) pending.push(reportData)
+    }
+    return pending
+  }
+
   const fetchReports = async () => {
-    setLoading(true)
-    try {
-      // 1. Cargar reportes del servidor
-      let apiReports: Report[] = []
+    // ─── PASO 1: CACHÉ INSTANTÁNEO (0ms) ─────────────────────────────────────
+    // Mostrar datos del cache local inmediatamente y apagar el spinner
+    const { value: cachedValue } = await Preferences.get({ key: 'cached_reports_list' })
+    if (cachedValue) {
       try {
-        const response = await apiFetch('/api/reports')
-        if (response.ok) {
-          const json = await response.json()
-          apiReports = Array.isArray(json) ? json : []
-          // Guardar listado en el caché local para uso offline
-          await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(apiReports) })
-        } else {
-          throw new Error('Servidor respondió con código de error')
+        const cached: Report[] = JSON.parse(cachedValue)
+        if (cached.length > 0) {
+          const pending = await loadPendingItems()
+          setReports(buildFinalReports(cached, pending))
+          setLoading(false) // ← Spinner OFF inmediatamente con datos del cache
         }
-      } catch (e) {
-        console.warn('[OFFLINE] No se pudo conectar al servidor, usando solo datos locales.')
-        // Recuperar desde el caché local
-        const { value } = await Preferences.get({ key: 'cached_reports_list' })
-        if (value) {
-          try {
-            apiReports = JSON.parse(value)
-            console.log('[OFFLINE] Cargados reportes desde el cache local:', apiReports.length)
-          } catch {
-            apiReports = []
-          }
-        }
+      } catch { /* ignorar parse error */ }
+    }
+
+    // ─── PASO 2: ACTUALIZAR DESDE SERVIDOR EN BACKGROUND ─────────────────────
+    try {
+      const response = await apiFetch('/api/reports')
+      if (response.ok) {
+        const json = await response.json()
+        const freshReports: Report[] = Array.isArray(json) ? json : []
+        await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(freshReports) })
+        const pending = await loadPendingItems()
+        setReports(buildFinalReports(freshReports, pending))
       }
-
-      // 2. Cargar reportes pendientes de robustStore
-      const pendingItems = await getPendingItems()
-      const pending: any[] = []
-      for (const itemKey of pendingItems) {
-        const parts = itemKey.split('_')
-        const folio = parts[0]
-        const phase = parts.slice(1).join('_')
-        const reportData = await getReportJSON(folio, phase)
-        if (reportData) {
-          pending.push(reportData)
-        }
-      }
-      
-      // 3. Mapear aperturas pendientes a formato Report
-      const pendingAperturas = pending
-        .filter(p => p.type === 'APERTURA')
-        .map(p => ({
-          id: -Math.abs((p.fields?.folio || '').split('').reduce((a: number, b: string) => { const h = (a << 5) - a + b.charCodeAt(0); return h & h; }, 0) || Date.now()), // ID numérico temporal
-          folio: p.fields?.folio || '',
-          contractId: p.fields?.contractId || '',
-          locationDesc: p.fields?.locationDesc || '',
-          delegacion: p.fields?.delegacion || '',
-          colonia: p.fields?.colonia || '',
-          status: 'DETECTADO',
-          created_at: p.savedAt,
-          isOffline: true,
-          serverMissing: p.serverMissing // Mantener flag de fallback
-        }))
-
-      // 3.5. Filtro de Seguridad RBAC para datos offline
-      const filteredPending = userProfile?.role === 'ADMIN' 
-        ? pendingAperturas 
-        : pendingAperturas.filter(p => userProfile?.assignments?.includes(p.contractId));
-
-      // 4. Integrar estados de actualizaciones pendientes
-      const finalReports = [...apiReports]
-      
-      // Añadir aperturas que no están en el servidor (filtradas)
-      filteredPending.forEach(pa => {
-        if (!finalReports.find(r => r.folio === pa.folio)) {
-          finalReports.unshift(pa as any)
-        }
-      })
-
-      // Marcar reportes del servidor que tienen actualizaciones pendientes locales
-      finalReports.forEach(r => {
-        const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields?.folio === r.folio)
-        if (relatedUpdates.length > 0) {
-          // Si hay UN solo update de 'terminado' o varios que incluyan 'terminado', el estatus es TERMINADO
-          const hasTerminado = relatedUpdates.some(up => up.phase === 'terminado')
-          r.status = hasTerminado ? 'TERMINADO' : 'EN PROCESO'
-          r.isOffline = true
-        }
-      })
-
-      setReports(finalReports)
-    } catch (err) {
-      console.error('[SYNC ERROR] No se pudieron cargar los reportes.')
+    } catch (e) {
+      console.warn('[OFFLINE] No se pudo conectar al servidor, usando datos del cache.')
     } finally {
-      setLoading(false)
+      setLoading(false) // Garantizar que el spinner se apaga siempre
     }
   }
 

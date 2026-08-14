@@ -57,6 +57,9 @@ let reportsCache = [];
 let lastCacheTime = 0;
 const CACHE_TTL = 30000; // 30s cache TTL
 
+// Deduplication map for offline retries
+const recentOfflineIds = new Map();
+
 // Warm up cache on server start
 async function refreshCacheFromSheets() {
   const sheetId = process.env.SHEET_ID;
@@ -73,11 +76,24 @@ async function refreshCacheFromSheets() {
   }
 }
 
-// Background initial cache warm-up
-refreshCacheFromSheets();
+// Load OAuth tokens from DB and start cache warm-up
+(async () => {
+  try {
+    const { loadTokens } = await import('./lib/db.js');
+    const tokens = await loadTokens();
+    if (tokens) {
+      setClientTokens(tokens);
+      console.log('[AUTH] Tokens OAuth cargados desde DB al iniciar.');
+    } else {
+      console.warn('[AUTH] No hay tokens OAuth guardados. Visita /api/auth/login para autorizar.');
+    }
+  } catch (e) {
+    console.warn('[AUTH] No se pudieron cargar tokens OAuth:', e.message);
+  }
+  await refreshCacheFromSheets();
+})();
 
-// Deduplication map for offline retries
-const recentOfflineIds = new Map();
+
 
 // --- GEOGRAPHIC DATA CACHE ---
 let utbDataCache = null;
@@ -115,9 +131,29 @@ app.get('/api/auth/callback', async (req, res) => {
     const tokens = await getTokensFromCode(code);
     await saveTokens(tokens);
     setClientTokens(tokens);
-    res.send('<h1>Login Exitoso en Google Drive & Sheets</h1><p>Las credenciales de usuario han sido guardadas. Ya puedes volver a la app.</p>');
+    res.send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:4rem">
+        <h1 style="color:#0891b2">✅ Login Exitoso en Google Drive &amp; Sheets</h1>
+        <p>Las credenciales han sido guardadas. Ya puedes volver a la app y hacer registros.</p>
+        <p style="color:#64748b;font-size:0.85rem">Puedes cerrar esta pestaña.</p>
+      </body></html>
+    `);
   } catch (err) {
     res.status(500).send('Falló el login en Google: ' + err.message);
+  }
+});
+
+app.get('/api/auth/status', async (req, res) => {
+  try {
+    const { loadTokens } = await import('./lib/db.js');
+    const tokens = await loadTokens();
+    res.json({
+      authorized: !!tokens,
+      hasRefreshToken: !!(tokens?.refresh_token),
+      loginUrl: '/api/auth/login'
+    });
+  } catch (e) {
+    res.json({ authorized: false, loginUrl: '/api/auth/login' });
   }
 });
 
@@ -254,8 +290,9 @@ app.get('/api/profile', requireSupabaseAuth, async (req, res) => {
 
 /**
  * POST /api/reports (Apertura Inicial)
- * SP REGIS Architecture: Validates, updates cache, returns 201 immediately,
- * and streams Drive Upload + Sheets Append + Supabase sync in parallel.
+ * Patrón SP REGIS: Ejecuta Drive + Sheets + Supabase con await ANTES de responder.
+ * En Vercel Serverless, el proceso se CONGELA después de res.json().
+ * Por eso todo debe completarse ANTES de enviar la respuesta HTTP.
  */
 app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req, res) => {
   try {
@@ -276,13 +313,11 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
     const safeContractId = sanitizeString(contractId || 'CONTRATO-01', 50);
     const safeEmpresaName = sanitizeString(empresaName || 'Empresa Bacheo', 200);
 
-    let folio = manualFolio;
-    if (folio && folio !== 'undefined') {
-      folio = sanitizeString(folio, 10);
-    } else {
-      const contractNum = (safeContractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
-      const randomSeq = Math.floor(1000 + Math.random() * 9000);
-      folio = `${contractNum}${randomSeq}`;
+    // Folio SIEMPRE viene del cliente. Si falta, rechazar.
+    let folio = sanitizeString(manualFolio || '', 10);
+    if (!folio || folio === 'undefined' || folio.length < 4) {
+      cleanupTempFile(req.file);
+      return res.status(400).json({ error: 'Folio inválido o faltante. El folio debe tener al menos 4 caracteres.' });
     }
 
     if (dedupeKey) {
@@ -332,65 +367,64 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
       created_at: new Date().toISOString()
     };
 
-    // 1. INSTANT UI FEEDBACK: Update memory cache immediately
+    // ─── PASO 1: Google Drive (AWAIT - ANTES de responder) ────────────────────────
+    if (photoBuffer) {
+      try {
+        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+        const contractNumForFolder = (safeContractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
+        const contractFolderName = `${contractNumForFolder} ${safeEmpresaName}`;
+        
+        let folioFolderId = null;
+        if (rootFolder) {
+          const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
+          folioFolderId = await getOrCreateFolder(folio, contractFolderId);
+        }
+
+        const photoName = `${folio}_inicial.jpg`;
+        const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
+        reportObj.photoUrl = driveData.webViewLink || '';
+        console.log(`[DRIVE] ✅ Foto subida para folio ${folio}: ${reportObj.photoUrl}`);
+      } catch (driveErr) {
+        console.error(`[DRIVE ERROR] Folio ${folio}:`, driveErr.message);
+        // Continuar sin foto - no bloquear el registro
+      }
+    }
+
+    // ─── PASO 2: Google Sheets (AWAIT - ANTES de responder) ─────────────────────
+    if (process.env.SHEET_ID) {
+      try {
+        await appendReportToSheet(process.env.SHEET_ID, reportObj);
+        console.log(`[SHEETS] ✅ Folio ${folio} registrado en Google Sheets.`);
+      } catch (sheetsErr) {
+        console.error(`[SHEETS ERROR] Folio ${folio}:`, sheetsErr.message);
+      }
+    }
+
+    // ─── PASO 3: Supabase (AWAIT - ANTES de responder) ────────────────────────
+    try {
+      const { error: supaErr } = await supabase
+        .from('bacheo_pruebas_app')
+        .upsert([reportObj], { onConflict: 'folio' });
+      if (!supaErr) {
+        console.log(`[SUPABASE] ✅ Folio ${folio} guardado en bacheo_pruebas_app.`);
+      } else {
+        console.error(`[SUPABASE ERROR] Folio ${folio}:`, supaErr.message);
+      }
+    } catch (supaEx) {
+      console.error(`[SUPABASE EXCEPTION] Folio ${folio}:`, supaEx.message);
+    }
+
+    // ─── PASO 4: Actualizar cache en memoria ──────────────────────────────────
     reportsCache = [reportObj, ...reportsCache.filter(r => r.folio !== folio)];
     lastCacheTime = Date.now();
 
-    // 2. FAST HTTP RESPONSE (Client does not wait for cloud latencies)
-    res.status(201).json({
+    // ─── PASO 5: Responder al cliente (DESPUÉS de todo) ────────────────────────
+    return res.status(201).json({
       folio: reportObj.folio,
       status: reportObj.status,
+      photoUrl: reportObj.photoUrl,
       success: true
     });
-
-    // 3. BACKGROUND ASYNC EXECUTION (Drive + Sheets + Supabase)
-    (async () => {
-      let driveLink = '';
-      if (photoBuffer) {
-        try {
-          const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-          const contractNumForFolder = (safeContractId.match(/\d+/)?.[0] || '0').padStart(3, '0');
-          const contractFolderName = `${contractNumForFolder} ${safeEmpresaName}`;
-          
-          let folioFolderId = null;
-          if (rootFolder) {
-            const contractFolderId = await getOrCreateFolder(contractFolderName, rootFolder);
-            folioFolderId = await getOrCreateFolder(folio, contractFolderId);
-          }
-
-          const photoName = `${folio}_inicial.jpg`;
-          const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
-          driveLink = driveData.webViewLink || '';
-          reportObj.photoUrl = driveLink;
-          console.log(`[DRIVE SUCCESS] ✅ Foto subida a Drive para folio ${folio}: ${driveLink}`);
-        } catch (driveErr) {
-          console.error(`[DRIVE ERROR] Falló subida a Drive para folio ${folio}:`, driveErr.message);
-        }
-      }
-
-      // Append to Google Sheets
-      if (process.env.SHEET_ID) {
-        try {
-          await appendReportToSheet(process.env.SHEET_ID, reportObj);
-          console.log(`[SHEETS SUCCESS] ✅ Folio ${folio} registrado en Google Sheets.`);
-        } catch (sheetsErr) {
-          console.error(`[SHEETS ERROR] Falló appendReportToSheet para folio ${folio}:`, sheetsErr.message);
-        }
-      }
-
-      // Upsert into Supabase bacheo_pruebas_app
-      try {
-        const { error: supaErr } = await supabase
-          .from('bacheo_pruebas_app')
-          .upsert([reportObj], { onConflict: 'folio' });
-
-        if (!supaErr) {
-          console.log(`[SUPABASE SUCCESS] ✅ Folio ${folio} resguardado en bacheo_pruebas_app (Supabase local).`);
-        }
-      } catch (supaEx) {
-        // ignore
-      }
-    })();
 
   } catch (err) {
     console.error('[REPORTS POST ERROR]', err);
@@ -399,8 +433,10 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
   }
 });
 
+
 /**
  * POST /api/reports/:folio/photo (Actualización de Foto Caja / Final)
+ * Patrón SP REGIS: await Drive + Sheets + Supabase ANTES de responder.
  */
 app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'), async (req, res) => {
   const { folio } = req.params;
@@ -441,55 +477,56 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
       if (tipoBache) updates.tipoBache = sanitizeString(tipoBache, 50);
     }
 
-    // INSTANT UI FEEDBACK: Update cache immediately
+    // ─── PASO 1: Google Drive (AWAIT) ─────────────────────────────────
+    if (photoBuffer) {
+      try {
+        const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
+        let folioFolderId = null;
+        if (rootFolder) {
+          folioFolderId = await getOrCreateFolder(folio, rootFolder);
+        }
+        const photoName = `${folio}_${phase}.jpg`;
+        const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
+        const driveLink = driveData.webViewLink || '';
+        if (phase === 'caja') updates.photoCaja = driveLink;
+        else updates.photoFinal = driveLink;
+        console.log(`[DRIVE] ✅ Foto ${phase} subida para folio ${folio}: ${driveLink}`);
+      } catch (driveErr) {
+        console.error(`[DRIVE UPDATE ERROR] Folio ${folio}:`, driveErr.message);
+      }
+    }
+
+    // ─── PASO 2: Google Sheets (AWAIT) ────────────────────────────────
+    if (process.env.SHEET_ID) {
+      try {
+        await updateReportInSheet(process.env.SHEET_ID, folio, {
+          ...updates,
+          usuario: safeUserEmail,
+          photocaja: updates.photoCaja,
+          photofinal: updates.photoFinal
+        });
+        console.log(`[SHEETS] ✅ Folio ${folio} actualizado (${phase}).`);
+      } catch (sheetsErr) {
+        console.error(`[SHEETS UPDATE ERROR] Folio ${folio}:`, sheetsErr.message);
+      }
+    }
+
+    // ─── PASO 3: Supabase (AWAIT) ────────────────────────────────────
+    try {
+      await supabase
+        .from('bacheo_pruebas_app')
+        .update(updates)
+        .eq('folio', folio);
+      console.log(`[SUPABASE] ✅ Folio ${folio} actualizado (${phase}).`);
+    } catch (supaEx) {
+      console.error(`[SUPABASE UPDATE ERROR] Folio ${folio}:`, supaEx.message);
+    }
+
+    // ─── PASO 4: Actualizar cache + Responder (DESPUÉS de todo) ─────────────
     reportsCache = reportsCache.map(r => r.folio === folio ? { ...r, ...updates } : r);
     lastCacheTime = Date.now();
 
-    res.json({ success: true, status: nextStatus });
-
-    // BACKGROUND ASYNC EXECUTION
-    (async () => {
-      let driveLink = '';
-      if (photoBuffer) {
-        try {
-          const rootFolder = process.env.DRIVE_PARENT_FOLDER_ID;
-          let folioFolderId = null;
-          if (rootFolder) {
-            folioFolderId = await getOrCreateFolder(folio, rootFolder);
-          }
-
-          const photoName = `${folio}_${phase}.jpg`;
-          const driveData = await uploadFile(photoName, 'image/jpeg', photoBuffer, folioFolderId || rootFolder);
-          driveLink = driveData.webViewLink || '';
-          if (phase === 'caja') updates.photoCaja = driveLink;
-          else updates.photoFinal = driveLink;
-        } catch (driveErr) {
-          console.error(`[DRIVE UPDATE ERROR] Folio ${folio}:`, driveErr.message);
-        }
-      }
-
-      if (process.env.SHEET_ID) {
-        try {
-          await updateReportInSheet(process.env.SHEET_ID, folio, {
-            ...updates,
-            usuario: safeUserEmail,
-            photocaja: updates.photoCaja,
-            photofinal: updates.photoFinal
-          });
-        } catch (sheetsErr) {
-          console.error(`[SHEETS UPDATE ERROR] Folio ${folio}:`, sheetsErr.message);
-        }
-      }
-
-      try {
-        await supabase
-          .from('bacheo_pruebas_app')
-          .update(updates)
-          .eq('folio', folio);
-      } catch (supaEx) {
-        // ignore
-      }
-    })();
+    return res.json({ success: true, status: nextStatus });
 
   } catch (err) {
     console.error('[PHOTO UPDATE ERROR]', err);
@@ -497,6 +534,7 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
     res.status(500).json({ error: 'Error al actualizar foto: ' + err.message });
   }
 });
+
 
 // Update Status
 app.patch('/api/reports/:folio/status', requireSupabaseAuth, async (req, res) => {
@@ -508,26 +546,38 @@ app.patch('/api/reports/:folio/status', requireSupabaseAuth, async (req, res) =>
   }
 
   try {
-    reportsCache = reportsCache.map(r => r.folio === folio ? { ...r, status } : r);
-    lastCacheTime = Date.now();
-
-    res.json({ folio, status, success: true });
-
-    (async () => {
-      if (process.env.SHEET_ID) {
+    // ─── PASO 1: Google Sheets (AWAIT) ──────────────────────────────────
+    if (process.env.SHEET_ID) {
+      try {
         await updateReportInSheet(process.env.SHEET_ID, folio, { status, usuario: req.user.email });
+        console.log(`[SHEETS] ✅ Status de folio ${folio} actualizado a ${status}.`);
+      } catch (sheetsErr) {
+        console.error(`[SHEETS STATUS ERROR] Folio ${folio}:`, sheetsErr.message);
       }
+    }
 
+    // ─── PASO 2: Supabase (AWAIT) ──────────────────────────────────────
+    try {
       await supabase
         .from('bacheo_pruebas_app')
         .update({ status, updated_by: req.user.email })
         .eq('folio', folio);
-    })();
+      console.log(`[SUPABASE] ✅ Status de folio ${folio} actualizado.`);
+    } catch (supaEx) {
+      console.error(`[SUPABASE STATUS ERROR] Folio ${folio}:`, supaEx.message);
+    }
+
+    // ─── PASO 3: Actualizar cache + Responder (DESPUÉS de todo) ────────────
+    reportsCache = reportsCache.map(r => r.folio === folio ? { ...r, status } : r);
+    lastCacheTime = Date.now();
+
+    return res.json({ folio, status, success: true });
 
   } catch (err) {
     console.error('[STATUS PATCH ERROR]', err);
     res.status(500).json({ error: 'Fallo al actualizar estatus' });
   }
 });
+
 
 export default app;

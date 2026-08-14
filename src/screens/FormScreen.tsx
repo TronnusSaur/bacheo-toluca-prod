@@ -58,6 +58,38 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
   }
 
   useEffect(() => {
+    // ─── AUTO-GEOLOCALIZACIÓN AL ABRIR LA PANTALLA (patrón LEVANTAMIENTO) ─────
+    // enableHighAccuracy: false = usa WiFi/celular (<1s), maximumAge: 60000 = reutiliza la última posición de 60s
+    const initLocation = () => {
+      if (!navigator.geolocation) return
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords
+          setFormData(prev => ({ ...prev, lat: latitude, lng: longitude }))
+          try {
+            const response = await apiFetch('/api/radar', {
+              method: 'POST',
+              body: JSON.stringify({ lat: latitude, lng: longitude })
+            })
+            const data = await response.json()
+            if (response.ok) {
+              setFormData(prev => ({
+                ...prev,
+                delegacion: data.delegacion || prev.delegacion,
+                colonia: data.name || prev.colonia,
+                lat: latitude,
+                lng: longitude
+              }))
+            }
+          } catch (radarErr) {
+            console.warn('[RADAR] Error al obtener zona:', radarErr)
+          }
+        },
+        (err) => console.warn('[GEO INIT] Error al pre-cargar ubicación:', err.message),
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+      )
+    }
+
     apiFetch('/api/catalogs/contracts')
       .then(res => res.json())
       .then(data => {
@@ -78,6 +110,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
         console.error('[CONTRATOS ERROR] No se pudieron cargar:', err);
       })
     updateOfflineCount()
+    initLocation()
   }, [])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -99,6 +132,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     setFormData(updatedData)
   }
 
+  // Botón manual de re-geolocalización (alta precisión GPS cuando el usuario lo pide explicitamente)
   const requestLocation = () => {
     if (!navigator.geolocation) return
     setIsUploading(true)
@@ -127,7 +161,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
         }
       },
       () => setIsUploading(false),
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
     )
   }
 
