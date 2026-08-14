@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { 
   RefreshCcw, MapPin, Camera, CheckCircle, ChevronLeft, WifiOff, 
   DatabaseBackup, Search, X, Calendar, User, Layers, 
-  Image as ImageIcon, Maximize2, Ruler, ExternalLink, ArrowRight 
+  Image as ImageIcon, Maximize2, Ruler, ExternalLink, ArrowRight, Trash2 
 } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
 import { saveReportJSON, saveReportPhoto, getPendingItems, getReportJSON, addPendingItem, clearReportFiles } from '../lib/robustStore'
@@ -856,14 +856,37 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
                         {report.folio}
                       </span>
                     </div>
-                    <span className={`status-tag ${syncingFolios.includes(report.folio) ? 'status-syncing' : (report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished'))} ${report.isOffline && !syncingFolios.includes(report.folio) ? 'offline-tint' : ''}`}>
-                      {syncingFolios.includes(report.folio)
-                        ? 'SUBIENDO...'
-                        : (report.isOffline 
-                            ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 
-                            : report.status)
-                      }
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      {report.isOffline && (
+                        <button
+                          type="button"
+                          className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                          title="Descartar borrador offline"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`¿Deseas descartar y eliminar el borrador offline del folio ${report.folio}?`)) {
+                              await clearReportFiles(report.folio, 'inicial');
+                              await clearReportFiles(report.folio, 'caja');
+                              await clearReportFiles(report.folio, 'terminado');
+                              setSyncStatus(`BORRADOR ${report.folio} ELIMINADO.`);
+                              setTimeout(() => setSyncStatus(null), 3000);
+                              fetchReports(true);
+                            }
+                          }}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                      <span className={`status-tag ${syncingFolios.includes(report.folio) ? 'status-syncing' : (report.status === 'DETECTADO' ? 'status-detected' : (report.status === 'EN PROCESO' ? 'status-process' : 'status-finished'))} ${report.isOffline && !syncingFolios.includes(report.folio) ? 'offline-tint' : ''}`}>
+                        {syncingFolios.includes(report.folio)
+                          ? 'SUBIENDO...'
+                          : (report.isOffline 
+                              ? (report.status === 'TERMINADO' ? 'TERMINADO (OFF)' : 'PENDIENTE') 
+                              : report.status)
+                        }
+                      </span>
+                    </div>
                   </div>
 
                   <div className="card-body">

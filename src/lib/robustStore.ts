@@ -275,3 +275,23 @@ export async function clearReportFiles(folio: string, phase: string): Promise<vo
     });
   }
 }
+
+/**
+ * Limpia por completo la cola y el almacenamiento offline (útil para reinicios y pruebas).
+ */
+export async function clearAllOfflineStorage(): Promise<void> {
+  await Preferences.remove({ key: 'pending_sync_items' });
+  await Preferences.remove({ key: 'cached_reports_list' });
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const db = await openDb();
+      const tx = db.transaction([STORE_DATA_NAME, STORE_PHOTOS_NAME], 'readwrite');
+      tx.objectStore(STORE_DATA_NAME).clear();
+      tx.objectStore(STORE_PHOTOS_NAME).clear();
+      console.log('[ROBUST STORE] Almacenamiento offline purgado al 100%.');
+    } catch (e) {
+      console.warn('[ROBUST STORE] Error al purgar IndexedDB:', e);
+    }
+  }
+}
+
