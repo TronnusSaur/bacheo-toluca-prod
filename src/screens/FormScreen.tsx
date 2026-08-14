@@ -40,7 +40,8 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
   const [offlineCount, setOfflineCount] = useState(0)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [hasPhoto, setHasPhoto] = useState(false)
-  const [folioSuffix, setFolioSuffix] = useState('')
+  const [autoFolio, setAutoFolio] = useState<string>('')
+  const [lastSubmittedFolio, setLastSubmittedFolio] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // OPTIMIZATION: Pre-compressed photo buffer, ready to submit instantly
@@ -50,6 +51,41 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
   const getContractPrefix = (contractId: string) => {
     const num = (contractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
     return num;
+  }
+
+  const calculateNextFolio = async (contractId: string) => {
+    if (!contractId) {
+      setAutoFolio('')
+      return
+    }
+    const prefix = getContractPrefix(contractId)
+    
+    // 1. Get all known folios from cached reports list
+    let allReports: any[] = []
+    try {
+      const { value } = await Preferences.get({ key: 'cached_reports_list' })
+      if (value) allReports = JSON.parse(value)
+    } catch (_) {}
+
+    // 2. Get pending offline items
+    const pendingKeys = await getPendingItems()
+    const offlineFolios = pendingKeys.map(k => k.split('_')[0])
+
+    let maxSeq = 0
+    const checkFolio = (f: string) => {
+      const clean = String(f || '').trim().replace(/^'/, '')
+      if (clean.startsWith(prefix) && clean.length === 6) {
+        const seq = parseInt(clean.slice(2), 10)
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
+      }
+    }
+
+    allReports.forEach(r => checkFolio(r.folio))
+    offlineFolios.forEach(f => checkFolio(f))
+
+    const nextSeq = maxSeq + 1
+    const nextFolio = `${prefix}${nextSeq.toString().padStart(4, '0')}`
+    setAutoFolio(nextFolio)
   }
 
   const updateOfflineCount = async () => {
@@ -105,6 +141,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
             contractId: first.id,
             delegacion: first.delegacion
           }));
+          calculateNextFolio(first.id);
         }
       })
       .catch((err) => {
@@ -125,8 +162,13 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     if (name === 'contractId') {
       const contract = contracts.find(c => c.id === value)
       setSelectedContract(contract || null)
-      if (contract && (formData.delegacion === '---' || formData.delegacion === '')) {
-        updatedData.delegacion = contract.delegacion
+      if (contract) {
+        if (formData.delegacion === '---' || formData.delegacion === '') {
+          updatedData.delegacion = contract.delegacion
+        }
+        calculateNextFolio(contract.id)
+      } else {
+        setAutoFolio('')
       }
     }
 
@@ -209,7 +251,8 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     setUploadStage('compressing')
     
     const prefix = getContractPrefix(selectedContract.id);
-    const folio = `${prefix}${folioSuffix}`;
+    const folio = autoFolio || `${prefix}0001`;
+    setLastSubmittedFolio(folio);
 
     // Photo buffer is ALREADY compressed since onChange — zero delay here
     const photoBuffer = compressedPhotoRef.current;
@@ -240,7 +283,6 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
 
     try {
       // OPTIMIZATION: 25-second timeout to prevent indefinite hangs.
-      // If the server doesn't respond in time, save offline automatically.
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 25000);
 
@@ -285,6 +327,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
         setUploadStage('done');
         setShowSuccessModal(true);
         resetForm();
+        if (selectedContract) calculateNextFolio(selectedContract.id);
       } else {
         setUploadStage('saving-offline');
         await saveToOffline(folio);
@@ -303,6 +346,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
 
   const saveToOffline = async (folio: string) => {
     try {
+      setLastSubmittedFolio(folio);
       // 1. Guardar la info como archivo JSON de metadatos
       await saveReportJSON(folio, 'inicial', {
         type: 'APERTURA',
@@ -335,6 +379,7 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       console.log('[OFFLINE] Reporte e imagen guardados localmente ok.');
       setShowSuccessModal(true);
       resetForm();
+      if (selectedContract) calculateNextFolio(selectedContract.id);
       updateOfflineCount();
     } catch (e) {
       console.error('[OFFLINE ERROR] No se pudo guardar ni localmente:', e);
@@ -357,7 +402,6 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       lat: 0,
       lng: 0 
     }))
-    setFolioSuffix('')
   }
 
   /** Human-readable stage labels for the progress indicator */
@@ -386,7 +430,8 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       {showSuccessModal && (
         <SuccessModal 
           onClose={() => setShowSuccessModal(false)} 
-          subtitle={offlineCount > 0 ? "Guardado localmente para sincronización" : "Reporte de apertura guardado correctamente"}
+          folio={lastSubmittedFolio}
+          subtitle={offlineCount > 0 ? "Guardado localmente para sincronización" : "Reporte de apertura registrado correctamente"}
         />
       )}
 
@@ -420,20 +465,13 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
 
         {selectedContract && (
           <div className="input-group">
-            <label className="field-label">Folio del Bache ({getContractPrefix(selectedContract.id)}XXXX)*</label>
-            <div className="folio-input-row">
-              <span className="folio-prefix">{getContractPrefix(selectedContract.id)}</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]{4}"
-                maxLength={4}
-                className="folio-suffix-input"
-                placeholder="0001"
-                value={folioSuffix}
-                onChange={e => setFolioSuffix(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                required
-              />
+            <label className="field-label">Folio Consecutivo del Bache</label>
+            <div className="auto-folio-box">
+              <div className="auto-folio-content">
+                <span className="auto-folio-label">Folio</span>
+                <span className="auto-folio-number">{autoFolio || `${getContractPrefix(selectedContract.id)}0001`}</span>
+              </div>
+              <span className="auto-folio-tag">Automático</span>
             </div>
           </div>
         )}
@@ -510,10 +548,10 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
           <button 
             type="submit" 
             className="btn-submit" 
-            disabled={isUploading || !hasPhoto || !formData.lat || !selectedContract || folioSuffix.length !== 4}
+            disabled={isUploading || !hasPhoto || !formData.lat || !selectedContract}
             style={{ 
-              opacity: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 1 : 0.5,
-              cursor: (hasPhoto && formData.lat && selectedContract && folioSuffix.length === 4) ? 'pointer' : 'not-allowed'
+              opacity: (hasPhoto && formData.lat && selectedContract) ? 1 : 0.5,
+              cursor: (hasPhoto && formData.lat && selectedContract) ? 'pointer' : 'not-allowed'
             }}
           >
             {isUploading ? (

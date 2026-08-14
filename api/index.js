@@ -323,11 +323,19 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
     const safeContractId = sanitizeString(contractId || 'CONTRATO-01', 50);
     const safeEmpresaName = sanitizeString(empresaName || 'Empresa Bacheo', 200);
 
-    // Folio SIEMPRE viene del cliente. Si falta, rechazar.
+    // Folio: usar el provisto o calcular proceduralmente el siguiente consecutivo si es AUTO
     let folio = sanitizeString(manualFolio || '', 10);
-    if (!folio || folio === 'undefined' || folio.length < 4) {
-      cleanupTempFile(req.file);
-      return res.status(400).json({ error: 'Folio inválido o faltante. El folio debe tener al menos 4 caracteres.' });
+    if (!folio || folio === 'undefined' || folio === 'AUTO' || folio.length < 4) {
+      const prefix = (safeContractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+      let maxSeq = 0;
+      reportsCache.forEach(r => {
+        const f = String(r.folio || '').trim().replace(/^'/, '');
+        if (f.startsWith(prefix) && f.length === 6) {
+          const seq = parseInt(f.slice(2), 10);
+          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+        }
+      });
+      folio = `${prefix}${(maxSeq + 1).toString().padStart(4, '0')}`;
     }
 
     if (dedupeKey) {
