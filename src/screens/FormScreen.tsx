@@ -255,6 +255,24 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     }
   }
 
+  const updateLocalCachedReport = async (reportObj: any) => {
+    try {
+      const { value } = await Preferences.get({ key: 'cached_reports_list' });
+      let list: any[] = [];
+      if (value) {
+        try { list = JSON.parse(value); } catch (_) {}
+      }
+      const normFolio = (f: string) => String(f || '').trim().replace(/^'/, '').padStart(6, '0');
+      list = [reportObj, ...list.filter(r => normFolio(r.folio) !== normFolio(reportObj.folio))];
+      await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(list) });
+      
+      // Reactive event to render in LogScreen in 0ms
+      window.dispatchEvent(new CustomEvent('report-saved', { detail: reportObj }));
+    } catch (e) {
+      console.warn('[CACHE UPDATE ERROR]', e);
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!hasPhoto || !selectedContract) return
@@ -311,6 +329,45 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
         try { resJson = await response.json(); } catch (_) {}
         const serverAssignedFolio = resJson?.folio || folio;
         setLastSubmittedFolio(serverAssignedFolio);
+
+        const newReportObj = {
+          id: Date.now(),
+          folio: serverAssignedFolio,
+          contractId: selectedContract.id,
+          contractid: selectedContract.id,
+          empresaName: selectedContract.empresa,
+          empresaname: selectedContract.empresa,
+          lat: formData.lat,
+          lng: formData.lng,
+          locationDesc: formData.locationDesc,
+          locationdesc: formData.locationDesc,
+          delegacion: formData.delegacion,
+          colonia: formData.colonia,
+          tipoBache: formData.tipoBache || 'SUPERFICIAL',
+          tipobache: formData.tipoBache || 'SUPERFICIAL',
+          calle_1: formData.calle1,
+          calle1: formData.calle1,
+          calle_2: formData.calle2,
+          calle2: formData.calle2,
+          largo: 0,
+          ancho: 0,
+          profundidad: 0,
+          m2: 0,
+          status: 'DETECTADO',
+          photoUrl: resJson?.photoUrl || '',
+          photourl: resJson?.photoUrl || '',
+          photoCaja: '',
+          photocaja: '',
+          photoFinal: '',
+          photofinal: '',
+          created_by: userProfile?.email || 'admin@bacheo.gob.mx',
+          updated_by: userProfile?.email || 'admin@bacheo.gob.mx',
+          created_at: new Date().toISOString(),
+          isOffline: false
+        };
+
+        // 0ms instant local cache injection
+        await updateLocalCachedReport(newReportObj);
         
         // Direct local Supabase upsert from client on local network (0-50ms)
         try {
@@ -389,6 +446,44 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
 
       // 3. Registrar el folio en la cola multiplataforma
       await addPendingItem(`${folio}_inicial`);
+
+      const offlineReportObj = {
+        id: Date.now(),
+        folio,
+        contractId: formData.contractId,
+        contractid: formData.contractId,
+        empresaName: selectedContract?.empresa || '',
+        empresaname: selectedContract?.empresa || '',
+        lat: formData.lat,
+        lng: formData.lng,
+        locationDesc: formData.locationDesc,
+        locationdesc: formData.locationDesc,
+        delegacion: formData.delegacion,
+        colonia: formData.colonia,
+        tipoBache: formData.tipoBache || 'SUPERFICIAL',
+        tipobache: formData.tipoBache || 'SUPERFICIAL',
+        calle_1: formData.calle1,
+        calle1: formData.calle1,
+        calle_2: formData.calle2,
+        calle2: formData.calle2,
+        largo: 0,
+        ancho: 0,
+        profundidad: 0,
+        m2: 0,
+        status: 'DETECTADO',
+        photoUrl: '',
+        photourl: '',
+        photoCaja: '',
+        photocaja: '',
+        photoFinal: '',
+        photofinal: '',
+        created_by: userProfile?.email || 'admin@bacheo.gob.mx',
+        updated_by: userProfile?.email || 'admin@bacheo.gob.mx',
+        created_at: new Date().toISOString(),
+        isOffline: true
+      };
+
+      await updateLocalCachedReport(offlineReportObj);
       
       console.log('[OFFLINE] Reporte e imagen guardados localmente ok.');
       setShowSuccessModal(true);

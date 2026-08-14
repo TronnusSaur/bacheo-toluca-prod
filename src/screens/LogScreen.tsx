@@ -207,9 +207,19 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
     window.addEventListener('sync-item-start', handleStart);
     window.addEventListener('sync-item-end', handleEnd);
 
+    const handleReportSaved = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const newReport = customEvent.detail;
+      if (newReport && newReport.folio) {
+        setReports(prev => [newReport, ...prev.filter(r => normFolio(r.folio) !== normFolio(newReport.folio))]);
+      }
+    };
+    window.addEventListener('report-saved', handleReportSaved);
+
     return () => {
       window.removeEventListener('sync-item-start', handleStart);
       window.removeEventListener('sync-item-end', handleEnd);
+      window.removeEventListener('report-saved', handleReportSaved);
     };
   }, []);
 
@@ -273,11 +283,31 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
           console.log('[SUPABASE LOCAL] ✅ Update guardado en Supabase para:', report.folio);
         } catch (_) {}
 
+        // Optimistic local update in state and storage (0ms)
+        const nextStatus = phase === 'caja' ? 'EN PROCESO' : 'TERMINADO';
+        setReports(prev => {
+          const updatedList = prev.map(r => {
+            if (normFolio(r.folio) === normFolio(report.folio)) {
+              const updated = { ...r, status: nextStatus, isOffline: false };
+              if (phase === 'caja') {
+                updated.largo = parseFloat(measures.largo) || r.largo;
+                updated.ancho = parseFloat(measures.ancho) || r.ancho;
+                updated.profundidad = parseFloat(measures.profundidad) || r.profundidad;
+                updated.m2 = measures.m2 || r.m2;
+                updated.tipoBache = parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL';
+              }
+              return updated;
+            }
+            return r;
+          });
+          Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(updatedList) });
+          return updatedList;
+        });
+
         await clearReportFiles(report.folio, phase);
         setShowSuccessModal(true);
         setSyncStatus(null);
         setCurrentStep('PHOTO');
-        fetchReports();
         setSelectedReport(null);
         setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
         return;
