@@ -65,7 +65,7 @@ async function refreshCacheFromSheets() {
   if (!sheetId) return;
   try {
     const sheetReports = await getAllReportsFromSheet(sheetId);
-    if (sheetReports && sheetReports.length > 0) {
+    if (Array.isArray(sheetReports)) {
       reportsCache = sheetReports;
       lastCacheTime = Date.now();
       console.log(`[CACHE] Cache de Bitácora actualizado desde Google Sheets (${reportsCache.length} registros).`);
@@ -262,31 +262,26 @@ app.get('/api/geojson/delegations', (req, res) => {
 // --- REPORTS API (INSTANT 0ms SP REGIS CACHE READ) ---
 app.get('/api/reports', requireSupabaseAuth, async (req, res) => {
   try {
-    // 1. Instant response from memory cache (0ms latency)
-    if (reportsCache.length > 0) {
-      res.json(reportsCache);
-      // Trigger background refresh if TTL expired
-      if (Date.now() - lastCacheTime > CACHE_TTL) {
-        refreshCacheFromSheets();
-      }
-      return;
-    }
-
-    // 2. Initial load if cache empty: Read from Sheets directly
     const sheetId = process.env.SHEET_ID;
-    if (sheetId) {
-      const sheetReports = await getAllReportsFromSheet(sheetId);
-      if (sheetReports.length > 0) {
-        reportsCache = sheetReports;
-        lastCacheTime = Date.now();
-        return res.json(sheetReports);
+    const forceRefresh = req.query.force === 'true';
+
+    // If force is requested, or if cache is expired/uninitialized, fetch live from Sheets
+    if (forceRefresh || Date.now() - lastCacheTime > CACHE_TTL || lastCacheTime === 0) {
+      if (sheetId) {
+        try {
+          const sheetReports = await getAllReportsFromSheet(sheetId);
+          reportsCache = Array.isArray(sheetReports) ? sheetReports : [];
+          lastCacheTime = Date.now();
+        } catch (sheetErr) {
+          console.warn('[REPORTS ERROR] Fallo al leer de Sheets:', sheetErr.message);
+        }
       }
     }
 
-    res.json([]);
+    return res.json(reportsCache);
   } catch (err) {
     console.error('[REPORTS GET ERROR]', err);
-    res.json(reportsCache);
+    return res.json(reportsCache);
   }
 });
 

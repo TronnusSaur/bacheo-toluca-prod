@@ -31,7 +31,7 @@ export default function MetricsScreen() {
       const { value } = await Preferences.get({ key: 'cached_reports_list' })
       if (value) {
         const cached = JSON.parse(value)
-        if (Array.isArray(cached) && cached.length > 0) {
+        if (Array.isArray(cached)) {
           setStats(computeStats(cached))
         }
       }
@@ -39,7 +39,7 @@ export default function MetricsScreen() {
 
     // 2. Background Server Refresh
     try {
-      const response = await apiFetch('/api/reports')
+      const response = await apiFetch('/api/reports?force=true')
       const data = await response.json()
       
       if (Array.isArray(data)) {

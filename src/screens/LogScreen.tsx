@@ -129,23 +129,25 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
     return pending
   }
 
-  const fetchReports = async () => {
+  const fetchReports = async (force: boolean = false) => {
     // ─── PASO 1: CACHÉ INSTANTÁNEO (0ms) ─────────────────────────────────────
-    const { value: cachedValue } = await Preferences.get({ key: 'cached_reports_list' })
-    if (cachedValue) {
-      try {
-        const cached: Report[] = JSON.parse(cachedValue)
-        if (cached.length > 0) {
+    if (!force) {
+      const { value: cachedValue } = await Preferences.get({ key: 'cached_reports_list' })
+      if (cachedValue) {
+        try {
+          const cached: Report[] = JSON.parse(cachedValue)
           const pending = await loadPendingItems()
           setReports(buildFinalReports(cached, pending))
           setLoading(false)
-        }
-      } catch { /* ignorar parse error */ }
+        } catch { /* ignorar parse error */ }
+      }
+    } else {
+      setLoading(true)
     }
 
     // ─── PASO 2: ACTUALIZAR DESDE SERVIDOR EN BACKGROUND ─────────────────────
     try {
-      const response = await apiFetch('/api/reports')
+      const response = await apiFetch(`/api/reports${force ? '?force=true' : ''}`)
       if (response.ok) {
         const json = await response.json()
         const freshReports: Report[] = Array.isArray(json) ? json : []
@@ -691,10 +693,10 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
           <p className="subtitle-main">Consultor de Folios y Expedientes</p>
         </div>
         <button 
-          onClick={fetchReports} 
+          onClick={() => fetchReports(true)} 
           className="p-2" 
           style={{ background: '#f8fafc', border: 'none', borderRadius: '12px', cursor: 'pointer', color: '#0891b2' }}
-          title="Actualizar datos"
+          title="Forzar actualización de datos"
         >
           <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
         </button>
