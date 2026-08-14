@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Camera, MapPin, Search, ChevronRight, LayoutDashboard, CheckCircle, WifiOff, UserCheck, Phone, Loader } from 'lucide-react'
-import { saveReportJSON, saveReportPhoto, addPendingItem, getPendingItems } from '../lib/robustStore'
+import { saveReportJSON, saveReportPhoto, addPendingItem, getPendingItems, clearReportFiles } from '../lib/robustStore'
 import { apiFetch } from '../lib/apiFetch'
+import { supabase } from '../lib/supabase'
 import { compressImage } from '../lib/imageUtils'
 import SuccessModal from '../components/SuccessModal'
 import './FormScreen.css'
@@ -252,12 +253,41 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        setUploadStage('done')
-        setShowSuccessModal(true)
-        resetForm()
+        let resJson: any = null;
+        try { resJson = await response.json(); } catch (_) {}
+        
+        // Direct local Supabase upsert from client on local network (0-50ms)
+        try {
+          await supabase.from('bacheo_pruebas_app').upsert([{
+            folio,
+            contractId: selectedContract.id,
+            empresaName: selectedContract.empresa,
+            lat: formData.lat,
+            lng: formData.lng,
+            locationDesc: formData.locationDesc,
+            delegacion: formData.delegacion,
+            colonia: formData.colonia,
+            tipoBache: formData.tipoBache || 'SUPERFICIAL',
+            calle_1: formData.calle1,
+            calle_2: formData.calle2,
+            status: 'DETECTADO',
+            photoUrl: resJson?.photoUrl || '',
+            created_by: userProfile?.email || 'admin@bacheo.gob.mx',
+            updated_by: userProfile?.email || 'admin@bacheo.gob.mx',
+          }], { onConflict: 'folio' });
+          console.log('[SUPABASE LOCAL] ✅ Folio guardado en bacheo_pruebas_app:', folio);
+        } catch (supaErr: any) {
+          console.warn('[SUPABASE LOCAL] Nota:', supaErr?.message);
+        }
+
+        await clearReportFiles(folio, 'inicial');
+        updateOfflineCount();
+        setUploadStage('done');
+        setShowSuccessModal(true);
+        resetForm();
       } else {
-        setUploadStage('saving-offline')
-        await saveToOffline(folio)
+        setUploadStage('saving-offline');
+        await saveToOffline(folio);
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') {

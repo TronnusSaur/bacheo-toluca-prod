@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { LayoutDashboard } from 'lucide-react'
+import { Preferences } from '@capacitor/preferences'
 import { apiFetch } from '../lib/apiFetch'
 import './MetricsScreen.css'
 
@@ -12,22 +13,38 @@ export default function MetricsScreen() {
     pending: 0
   })
 
+  const computeStats = (data: any[]) => {
+    const totalM2 = data.reduce((acc: number, r: any) => acc + (parseFloat(r.m2) || 0), 0)
+    const completed = data.filter((r: any) => r.status === 'TERMINADO').length
+    const pending = data.length - completed
+    return {
+      total: data.length,
+      m2: parseFloat(totalM2.toFixed(1)),
+      completed,
+      pending
+    }
+  }
+
   const fetchStats = async () => {
+    // 1. Instant Cache-First (0ms)
+    try {
+      const { value } = await Preferences.get({ key: 'cached_reports_list' })
+      if (value) {
+        const cached = JSON.parse(value)
+        if (Array.isArray(cached) && cached.length > 0) {
+          setStats(computeStats(cached))
+        }
+      }
+    } catch (_) {}
+
+    // 2. Background Server Refresh
     try {
       const response = await apiFetch('/api/reports')
       const data = await response.json()
       
       if (Array.isArray(data)) {
-        const totalM2 = data.reduce((acc: number, r: any) => acc + (parseFloat(r.m2) || 0), 0)
-        const completed = data.filter((r: any) => r.status === 'TERMINADO').length
-        const pending = data.length - completed
-        
-        setStats({
-          total: data.length,
-          m2: parseFloat(totalM2.toFixed(1)),
-          completed,
-          pending
-        })
+        await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(data) })
+        setStats(computeStats(data))
       }
     } catch (err) {
       console.error('[METRICAS ERROR] No se pudieron cargar los datos.')

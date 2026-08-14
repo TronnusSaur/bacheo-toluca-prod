@@ -52,8 +52,12 @@ function mapReportToRow(report) {
   const tipoBache = rawTipo.replace(/^CAJA\s+/i, '').trim();
   const responsable = report.usuario || report.updated_by || report.created_by || '';
 
+  const folioStr = String(report.folio || '').trim();
+  // Force text format in Google Sheets with single quote so leading zero (010003) is preserved
+  const sheetFolio = /^\d+$/.test(folioStr) ? `'${folioStr}` : folioStr;
+
   return [
-    report.folio || '',
+    sheetFolio,
     fecha,
     report.contractid || report.contractId || '',
     report.empresaname || report.empresaName || '',
@@ -251,13 +255,18 @@ export async function getAllReportsFromSheet(sheetId) {
     const dataRows = rows[0]?.[0]?.toLowerCase().includes('folio') ? rows.slice(1) : rows;
 
     return dataRows.map((r, idx) => {
+      let rawFolio = String(r[0] || '').trim().replace(/^'/, '');
+      if (/^\d{5}$/.test(rawFolio)) {
+        rawFolio = rawFolio.padStart(6, '0');
+      }
+
       const coords = (r[7] || '').split(',').map(c => parseFloat(c.trim()));
       const lat = coords[0] && !isNaN(coords[0]) ? coords[0] : 0;
       const lng = coords[1] && !isNaN(coords[1]) ? coords[1] : 0;
 
       return {
         id: idx + 1,
-        folio: r[0] || '',
+        folio: rawFolio,
         created_at: r[1] || new Date().toISOString(),
         contractId: r[2] || '',
         contractid: r[2] || '',

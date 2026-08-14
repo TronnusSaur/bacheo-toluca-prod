@@ -14,7 +14,7 @@
  */
 
 import { getPendingItems, getReportJSON, getReportPhoto, clearReportFiles } from './robustStore';
-import { getIdToken } from './supabase';
+import { getIdToken, supabase } from './supabase';
 import { apiFetch } from './apiFetch';
 
 /** Determina si la conexión actual es suficientemente buena para sincronizar */
@@ -139,6 +139,35 @@ export async function syncPendingReports(onComplete?: SyncCallback): Promise<voi
       }
 
       if (response.ok || response.status === 409) {
+        // Direct local Supabase update from client
+        try {
+          if (report.type === 'APERTURA') {
+            await supabase.from('bacheo_pruebas_app').upsert([{
+              folio: f.folio,
+              contractId: f.contractId || '',
+              empresaName: f.empresaName || '',
+              lat: parseFloat(f.lat) || 0,
+              lng: parseFloat(f.lng) || 0,
+              locationDesc: f.locationDesc || '',
+              delegacion: f.delegacion || '',
+              colonia: f.colonia || '',
+              tipoBache: f.tipoBache || 'SUPERFICIAL',
+              calle_1: f.calle1 || '',
+              calle_2: f.calle2 || '',
+              status: 'DETECTADO',
+            }], { onConflict: 'folio' });
+          } else if (report.type === 'UPDATE') {
+            await supabase.from('bacheo_pruebas_app').update({
+              status: phase === 'caja' ? 'EN PROCESO' : 'TERMINADO',
+              largo: parseFloat(f.largo) || 0,
+              ancho: parseFloat(f.ancho) || 0,
+              profundidad: parseFloat(f.profundidad) || 0,
+              m2: parseFloat(f.m2) || 0,
+              tipoBache: f.tipoBache || '',
+            }).eq('folio', folio);
+          }
+        } catch (_) {}
+
         await clearReportFiles(folio, phase);
         synced++;
         isSuccess = true;

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCcw, FileText, MapPin, Camera, CheckCircle, ArrowRight, ChevronLeft, WifiOff, DatabaseBackup, AlertCircle } from 'lucide-react'
 import SuccessModal from '../components/SuccessModal'
-import { saveReportJSON, saveReportPhoto, getPendingItems, getReportJSON, addPendingItem } from '../lib/robustStore'
+import { saveReportJSON, saveReportPhoto, getPendingItems, getReportJSON, addPendingItem, clearReportFiles } from '../lib/robustStore'
 import { Preferences } from '@capacitor/preferences'
+import { supabase } from '../lib/supabase'
 import { compressImage } from '../lib/imageUtils'
 import { apiFetch } from '../lib/apiFetch'
 import './LogScreen.css'
@@ -36,6 +37,8 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
   const [syncingFolios, setSyncingFolios] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const normFolio = (f: string) => String(f || '').trim().replace(/^'/, '').padStart(6, '0');
+
   const buildFinalReports = (apiReports: Report[], pending: any[]) => {
     const pendingAperturas = pending
       .filter(p => p.type === 'APERTURA')
@@ -58,12 +61,12 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
 
     const finalReports = [...apiReports]
     filteredPending.forEach(pa => {
-      if (!finalReports.find(r => r.folio === pa.folio)) {
+      if (!finalReports.find(r => normFolio(r.folio) === normFolio(pa.folio))) {
         finalReports.unshift(pa as any)
       }
     })
     finalReports.forEach(r => {
-      const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && p.fields?.folio === r.folio)
+      const relatedUpdates = pending.filter(p => p.type === 'UPDATE' && normFolio(p.fields?.folio) === normFolio(r.folio))
       if (relatedUpdates.length > 0) {
         const hasTerminado = relatedUpdates.some(up => up.phase === 'terminado')
         r.status = hasTerminado ? 'TERMINADO' : 'EN PROCESO'
@@ -88,7 +91,6 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
 
   const fetchReports = async () => {
     // ─── PASO 1: CACHÉ INSTANTÁNEO (0ms) ─────────────────────────────────────
-    // Mostrar datos del cache local inmediatamente y apagar el spinner
     const { value: cachedValue } = await Preferences.get({ key: 'cached_reports_list' })
     if (cachedValue) {
       try {
@@ -96,7 +98,7 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
         if (cached.length > 0) {
           const pending = await loadPendingItems()
           setReports(buildFinalReports(cached, pending))
-          setLoading(false) // ← Spinner OFF inmediatamente con datos del cache
+          setLoading(false)
         }
       } catch { /* ignorar parse error */ }
     }
@@ -108,13 +110,28 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
         const json = await response.json()
         const freshReports: Report[] = Array.isArray(json) ? json : []
         await Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(freshReports) })
+        
+        // Auto-limpieza de la cola offline si el folio ya está registrado en el servidor
+        const currentPendingKeys = await getPendingItems()
+        for (const itemKey of currentPendingKeys) {
+          const parts = itemKey.split('_')
+          const folio = parts[0]
+          const phase = parts.slice(1).join('_')
+          const serverReport = freshReports.find(r => normFolio(r.folio) === normFolio(folio))
+          if (serverReport) {
+            if (phase === 'inicial' || (phase === 'caja' && serverReport.status !== 'DETECTADO') || (phase === 'terminado' && serverReport.status === 'TERMINADO')) {
+              await clearReportFiles(folio, phase)
+            }
+          }
+        }
+
         const pending = await loadPendingItems()
         setReports(buildFinalReports(freshReports, pending))
       }
     } catch (e) {
       console.warn('[OFFLINE] No se pudo conectar al servidor, usando datos del cache.')
     } finally {
-      setLoading(false) // Garantizar que el spinner se apaga siempre
+      setLoading(false)
     }
   }
 
@@ -204,12 +221,30 @@ export default function LogScreen({ userProfile }: { userProfile: any }) {
       })
 
       if (res.ok) {
-        setShowSuccessModal(true)
-        setSyncStatus(null)
-        setCurrentStep('PHOTO')
-        fetchReports()
-        setSelectedReport(null)
-        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 })
+        // Direct local Supabase update from client
+        try {
+          const updates: any = {
+            status: phase === 'caja' ? 'EN PROCESO' : 'TERMINADO',
+            updated_by: userProfile?.email || 'admin@bacheo.gob.mx',
+          };
+          if (phase === 'caja') {
+            updates.largo = parseFloat(measures.largo) || 0;
+            updates.ancho = parseFloat(measures.ancho) || 0;
+            updates.profundidad = parseFloat(measures.profundidad) || 0;
+            updates.m2 = measures.m2 || 0;
+            updates.tipoBache = parseFloat(measures.profundidad) > 0.07 ? 'CAJA PROFUNDA' : 'CAJA SUPERFICIAL';
+          }
+          await supabase.from('bacheo_pruebas_app').update(updates).eq('folio', report.folio);
+          console.log('[SUPABASE LOCAL] ✅ Update guardado en Supabase para:', report.folio);
+        } catch (_) {}
+
+        await clearReportFiles(report.folio, phase);
+        setShowSuccessModal(true);
+        setSyncStatus(null);
+        setCurrentStep('PHOTO');
+        fetchReports();
+        setSelectedReport(null);
+        setMeasures({ largo: '', ancho: '', profundidad: '', m2: 0 });
         return;
       }
 

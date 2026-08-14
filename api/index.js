@@ -44,7 +44,6 @@ function cleanupTempFile(file) {
 app.use(async (req, res, next) => {
   try {
     await initDb();
-    await initSupabaseTables();
     next();
   } catch (err) {
     console.error('[CRITICAL INIT ERROR]', err);
@@ -236,17 +235,28 @@ app.get('/api/geojson', (req, res) => {
   else res.status(500).json({ error: 'GeoJSON no disponible' });
 });
 
+const DELEGATIONS_FILE = path.join(process.cwd(), 'delegaciones.geojson');
+
 app.get('/api/geojson/delegations', (req, res) => {
   if (delegationsDataCache) return res.json(delegationsDataCache);
-  const data = loadGeoJSON();
-  if (!data) return res.status(500).json({ error: 'GeoJSON no disponible' });
-
-  try {
-    delegationsDataCache = turf.dissolve(data, { propertyName: 'NOMDEL' });
-    res.json(delegationsDataCache);
-  } catch (err) {
-    res.status(500).json({ error: 'Error al disolver delegaciones' });
+  if (fs.existsSync(DELEGATIONS_FILE)) {
+    try {
+      delegationsDataCache = JSON.parse(fs.readFileSync(DELEGATIONS_FILE, 'utf8'));
+      return res.json(delegationsDataCache);
+    } catch (e) {
+      console.warn('[GEOJSON WARN] No se pudo leer delegaciones.geojson precalculado:', e.message);
+    }
   }
+  const data = loadGeoJSON();
+  if (data) {
+    try {
+      delegationsDataCache = turf.dissolve(data, { propertyName: 'NOMDEL' });
+      return res.json(delegationsDataCache);
+    } catch (err) {
+      return res.status(500).json({ error: 'Error al disolver delegaciones' });
+    }
+  }
+  res.status(500).json({ error: 'GeoJSON no disponible' });
 });
 
 // --- REPORTS API (INSTANT 0ms SP REGIS CACHE READ) ---
@@ -400,25 +410,11 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
       }
     }
 
-    // ─── PASO 3: Supabase (AWAIT - ANTES de responder) ────────────────────────
-    try {
-      const { error: supaErr } = await supabase
-        .from('bacheo_pruebas_app')
-        .upsert([reportObj], { onConflict: 'folio' });
-      if (!supaErr) {
-        console.log(`[SUPABASE] ✅ Folio ${folio} guardado en bacheo_pruebas_app.`);
-      } else {
-        console.error(`[SUPABASE ERROR] Folio ${folio}:`, supaErr.message);
-      }
-    } catch (supaEx) {
-      console.error(`[SUPABASE EXCEPTION] Folio ${folio}:`, supaEx.message);
-    }
-
-    // ─── PASO 4: Actualizar cache en memoria ──────────────────────────────────
+    // ─── PASO 3: Actualizar cache en memoria ──────────────────────────────────
     reportsCache = [reportObj, ...reportsCache.filter(r => r.folio !== folio)];
     lastCacheTime = Date.now();
 
-    // ─── PASO 5: Responder al cliente (DESPUÉS de todo) ────────────────────────
+    // ─── PASO 4: Responder al cliente (DESPUÉS de Drive + Sheets) ─────────────
     return res.status(201).json({
       folio: reportObj.folio,
       status: reportObj.status,
@@ -511,18 +507,7 @@ app.post('/api/reports/:folio/photo', requireSupabaseAuth, upload.single('photo'
       }
     }
 
-    // ─── PASO 3: Supabase (AWAIT) ────────────────────────────────────
-    try {
-      await supabase
-        .from('bacheo_pruebas_app')
-        .update(updates)
-        .eq('folio', folio);
-      console.log(`[SUPABASE] ✅ Folio ${folio} actualizado (${phase}).`);
-    } catch (supaEx) {
-      console.error(`[SUPABASE UPDATE ERROR] Folio ${folio}:`, supaEx.message);
-    }
-
-    // ─── PASO 4: Actualizar cache + Responder (DESPUÉS de todo) ─────────────
+    // ─── PASO 3: Actualizar cache + Responder (DESPUÉS de Drive + Sheets) ────
     reportsCache = reportsCache.map(r => r.folio === folio ? { ...r, ...updates } : r);
     lastCacheTime = Date.now();
 
@@ -556,18 +541,7 @@ app.patch('/api/reports/:folio/status', requireSupabaseAuth, async (req, res) =>
       }
     }
 
-    // ─── PASO 2: Supabase (AWAIT) ──────────────────────────────────────
-    try {
-      await supabase
-        .from('bacheo_pruebas_app')
-        .update({ status, updated_by: req.user.email })
-        .eq('folio', folio);
-      console.log(`[SUPABASE] ✅ Status de folio ${folio} actualizado.`);
-    } catch (supaEx) {
-      console.error(`[SUPABASE STATUS ERROR] Folio ${folio}:`, supaEx.message);
-    }
-
-    // ─── PASO 3: Actualizar cache + Responder (DESPUÉS de todo) ────────────
+    // ─── PASO 2: Actualizar cache + Responder ──────────────────────────────
     reportsCache = reportsCache.map(r => r.folio === folio ? { ...r, status } : r);
     lastCacheTime = Date.now();
 

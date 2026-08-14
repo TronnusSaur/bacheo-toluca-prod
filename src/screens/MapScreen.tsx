@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { apiFetch } from '../lib/apiFetch'
 import './MapScreen.css'
 import { Filter, Layers, ListFilter, MapPin, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react'
+import { Preferences } from '@capacitor/preferences'
 
 // Icon Generator
 const createPotholeIcon = (status: string) => {
@@ -45,9 +46,24 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // 1. Instant reports from local cache (0ms)
+    Preferences.get({ key: 'cached_reports_list' }).then(({ value }) => {
+      if (value) {
+        try {
+          const cached = JSON.parse(value);
+          if (Array.isArray(cached) && cached.length > 0) setReports(cached);
+        } catch (_) {}
+      }
+    });
+
     apiFetch('/api/geojson/delegations').then(res => res.json()).then(data => { setDelegations(data); setLoading(false); }).catch(() => setLoading(false))
     apiFetch('/api/geojson').then(res => res.json()).then(data => setUtbs(data))
-    apiFetch('/api/reports').then(res => res.json()).then(data => setReports(Array.isArray(data) ? data : []))
+    apiFetch('/api/reports').then(res => res.json()).then(data => {
+      if (Array.isArray(data)) {
+        setReports(data);
+        Preferences.set({ key: 'cached_reports_list', value: JSON.stringify(data) });
+      }
+    })
   }, [])
 
   const delegationStyle = { fillColor: '#00b8a3', weight: 2, opacity: 1, color: '#0f172a', fillOpacity: 0.05 };
