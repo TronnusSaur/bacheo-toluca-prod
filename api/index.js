@@ -290,6 +290,42 @@ app.get('/api/reports', requireSupabaseAuth, async (req, res) => {
   }
 });
 
+// --- NEXT FOLIO CALCULATION API (REAL-TIME CONSECUTIVE) ---
+app.get('/api/reports/next-folio', async (req, res) => {
+  try {
+    const { contractId } = req.query;
+    const prefix = (String(contractId || 'CONTRATO 001').match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+
+    if (process.env.SHEET_ID) {
+      try {
+        const sheetReports = await getAllReportsFromSheet(process.env.SHEET_ID);
+        if (sheetReports && sheetReports.length > 0) {
+          reportsCache = sheetReports;
+          lastCacheTime = Date.now();
+        }
+      } catch (err) {
+        console.warn('[NEXT-FOLIO] Error al consultar Sheets:', err.message);
+      }
+    }
+
+    let maxSeq = 0;
+    reportsCache.forEach(r => {
+      const f = String(r.folio || '').trim().replace(/^'/, '');
+      const padded = /^\d{1,5}$/.test(f) ? f.padStart(6, '0') : f;
+      if (padded.startsWith(prefix) && padded.length === 6) {
+        const seq = parseInt(padded.slice(2), 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    });
+
+    const nextSeq = maxSeq + 1;
+    const nextFolio = `${prefix}${nextSeq.toString().padStart(4, '0')}`;
+    return res.json({ nextFolio, prefix, lastSeq: maxSeq });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/profile', requireSupabaseAuth, async (req, res) => {
   res.json({
     email: req.user.email,
@@ -323,19 +359,40 @@ app.post('/api/reports', requireSupabaseAuth, upload.single('photo'), async (req
     const safeContractId = sanitizeString(contractId || 'CONTRATO-01', 50);
     const safeEmpresaName = sanitizeString(empresaName || 'Empresa Bacheo', 200);
 
-    // Folio: usar el provisto o calcular proceduralmente el siguiente consecutivo si es AUTO
-    let folio = sanitizeString(manualFolio || '', 10);
-    if (!folio || folio === 'undefined' || folio === 'AUTO' || folio.length < 4) {
-      const prefix = (safeContractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
-      let maxSeq = 0;
-      reportsCache.forEach(r => {
-        const f = String(r.folio || '').trim().replace(/^'/, '');
-        if (f.startsWith(prefix) && f.length === 6) {
-          const seq = parseInt(f.slice(2), 10);
-          if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+    // Asegurar que reportsCache esté actualizado con los datos reales de Sheets
+    if (process.env.SHEET_ID && (Date.now() - lastCacheTime > CACHE_TTL || reportsCache.length === 0)) {
+      try {
+        const fresh = await getAllReportsFromSheet(process.env.SHEET_ID);
+        if (fresh && fresh.length > 0) {
+          reportsCache = fresh;
+          lastCacheTime = Date.now();
         }
-      });
-      folio = `${prefix}${(maxSeq + 1).toString().padStart(4, '0')}`;
+      } catch (_) {}
+    }
+
+    const prefix = (safeContractId.match(/\d+/)?.[0] || '0').slice(-2).padStart(2, '0');
+    let maxSeq = 0;
+    const existingFoliosSet = new Set();
+    
+    reportsCache.forEach(r => {
+      const f = String(r.folio || '').trim().replace(/^'/, '');
+      const padded = /^\d{1,5}$/.test(f) ? f.padStart(6, '0') : f;
+      existingFoliosSet.add(padded);
+      if (padded.startsWith(prefix) && padded.length === 6) {
+        const seq = parseInt(padded.slice(2), 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    });
+
+    let rawFolio = String(manualFolio || '').trim().replace(/^'/, '');
+    let paddedFolio = /^\d{1,5}$/.test(rawFolio) ? rawFolio.padStart(6, '0') : rawFolio;
+
+    let folio = paddedFolio;
+    // Si no viene folio, o si es AUTO, o SI YA EXISTE EN LA BASE DE DATOS (DUPLICADO PROHIBIDO):
+    if (!folio || folio === 'undefined' || folio === 'AUTO' || folio.length < 4 || existingFoliosSet.has(folio)) {
+      const calculatedNextSeq = maxSeq + 1;
+      folio = `${prefix}${calculatedNextSeq.toString().padStart(4, '0')}`;
+      console.log(`[FOLIO AUTO-ASIGNADO] Folio solicitado '${manualFolio}' ya existe o es inválido. Asignado consecutivo único: ${folio}`);
     }
 
     if (dedupeKey) {

@@ -256,7 +256,7 @@ export async function getAllReportsFromSheet(sheetId) {
 
     return dataRows.map((r, idx) => {
       let rawFolio = String(r[0] || '').trim().replace(/^'/, '');
-      if (/^\d{5}$/.test(rawFolio)) {
+      if (/^\d{1,5}$/.test(rawFolio)) {
         rawFolio = rawFolio.padStart(6, '0');
       }
 

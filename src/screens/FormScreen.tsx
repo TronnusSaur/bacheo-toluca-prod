@@ -60,22 +60,34 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
     }
     const prefix = getContractPrefix(contractId)
     
-    // 1. Get all known folios from cached reports list
+    // 1. Consultar en vivo al servidor (fuente de la verdad: Google Sheets + Cache)
+    try {
+      const res = await apiFetch(`/api/reports/next-folio?contractId=${encodeURIComponent(contractId)}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.nextFolio) {
+          setAutoFolio(data.nextFolio)
+          return
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback offline: Caché local + cola de pendientes
     let allReports: any[] = []
     try {
       const { value } = await Preferences.get({ key: 'cached_reports_list' })
       if (value) allReports = JSON.parse(value)
     } catch (_) {}
 
-    // 2. Get pending offline items
     const pendingKeys = await getPendingItems()
     const offlineFolios = pendingKeys.map(k => k.split('_')[0])
 
     let maxSeq = 0
     const checkFolio = (f: string) => {
       const clean = String(f || '').trim().replace(/^'/, '')
-      if (clean.startsWith(prefix) && clean.length === 6) {
-        const seq = parseInt(clean.slice(2), 10)
+      const padded = /^\d{1,5}$/.test(clean) ? clean.padStart(6, '0') : clean
+      if (padded.startsWith(prefix) && padded.length === 6) {
+        const seq = parseInt(padded.slice(2), 10)
         if (!isNaN(seq) && seq > maxSeq) maxSeq = seq
       }
     }
@@ -297,11 +309,13 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
       if (response.ok) {
         let resJson: any = null;
         try { resJson = await response.json(); } catch (_) {}
+        const serverAssignedFolio = resJson?.folio || folio;
+        setLastSubmittedFolio(serverAssignedFolio);
         
         // Direct local Supabase upsert from client on local network (0-50ms)
         try {
           await supabase.from('bacheo_pruebas_app').upsert([{
-            folio,
+            folio: serverAssignedFolio,
             contractId: selectedContract.id,
             empresaName: selectedContract.empresa,
             lat: formData.lat,
@@ -317,12 +331,12 @@ export default function FormScreen({ userProfile }: { userProfile: any }) {
             created_by: userProfile?.email || 'admin@bacheo.gob.mx',
             updated_by: userProfile?.email || 'admin@bacheo.gob.mx',
           }], { onConflict: 'folio' });
-          console.log('[SUPABASE LOCAL] ✅ Folio guardado en bacheo_pruebas_app:', folio);
+          console.log('[SUPABASE LOCAL] ✅ Folio guardado en bacheo_pruebas_app:', serverAssignedFolio);
         } catch (supaErr: any) {
           console.warn('[SUPABASE LOCAL] Nota:', supaErr?.message);
         }
 
-        await clearReportFiles(folio, 'inicial');
+        await clearReportFiles(serverAssignedFolio, 'inicial');
         updateOfflineCount();
         setUploadStage('done');
         setShowSuccessModal(true);
